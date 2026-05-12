@@ -1,0 +1,15 @@
+name: app-service-baseline-implementation
+metadata:
+  template: app-service-baseline-implementation@0.0.1
+infra:
+  provider: bicep
+  path: infra-as-code/bicep
+hooks:
+  preprovision:
+    - shell: pwsh
+      run: ./scripts/hooks/preprovision.ps1
+      interactive: false
+  postprovision:
+    - shell: pwsh
+      run: ./scripts/hooks/postprovision.ps1
+      interactive: false

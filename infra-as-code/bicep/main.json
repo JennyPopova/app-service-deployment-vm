@@ -1,0 +1,1651 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "1702219411453336517"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "The location in which all resources should be deployed."
+      }
+    },
+    "baseName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 12,
+      "metadata": {
+        "description": "This is the base name for each Azure resource name (3-12 chars, lowercase letters, numbers, and hyphens)."
+      }
+    },
+    "sqlEntraAdministratorLogin": {
+      "type": "string",
+      "metadata": {
+        "description": "The Microsoft Entra login name (UPN) to set as SQL Server Entra administrator."
+      }
+    },
+    "sqlEntraAdministratorObjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "The Microsoft Entra object ID to set as SQL Server Entra administrator."
+      }
+    },
+    "developmentEnvironment": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Optional. When true will deploy a cost-optimised environment for development purposes. Note that when this param is true, the deployment is not suitable or recommended for Production environments. Default = false."
+      }
+    },
+    "runnerAdminUsername": {
+      "type": "string",
+      "defaultValue": "azureuser",
+      "metadata": {
+        "description": "The local admin username for the private runner VM."
+      }
+    },
+    "runnerAdminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "The local admin password for the private runner VM."
+      }
+    }
+  },
+  "variables": {
+    "logWorkspaceName": "[format('log-{0}', parameters('baseName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('logWorkspaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "networkDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "11762847190651016293"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "This is the base name for each Azure resource name (6-12 chars)"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "The resource group location"
+              }
+            }
+          },
+          "variables": {
+            "vnetName": "[format('vnet-{0}', parameters('baseName'))]",
+            "agentsNatGatewayName": "[format('nat-agents-{0}', parameters('baseName'))]",
+            "agentsNatPublicIpName": "[format('pip-agents-nat-{0}', parameters('baseName'))]",
+            "vnetAddressPrefix": "10.0.0.0/16",
+            "appServicesSubnetPrefix": "10.0.0.0/24",
+            "privateEndpointsSubnetPrefix": "10.0.2.0/27",
+            "agentsSubnetPrefix": "10.0.2.32/27"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/publicIPAddresses",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('agentsNatPublicIpName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "publicIPAllocationMethod": "Static",
+                "publicIPAddressVersion": "IPv4"
+              }
+            },
+            {
+              "type": "Microsoft.Network/natGateways",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('agentsNatGatewayName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard"
+              },
+              "properties": {
+                "publicIpAddresses": [
+                  {
+                    "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('agentsNatPublicIpName'))]"
+                  }
+                ],
+                "idleTimeoutInMinutes": 10
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', variables('agentsNatPublicIpName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('vnetName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "[variables('vnetAddressPrefix')]"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "snet-appServicePlan",
+                    "properties": {
+                      "addressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "privateEndpointNetworkPolicies": "Enabled",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-appServicesSubnet')]"
+                      },
+                      "delegations": [
+                        {
+                          "name": "delegation",
+                          "properties": {
+                            "serviceName": "Microsoft.Web/serverFarms"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "snet-privateEndpoints",
+                    "properties": {
+                      "addressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                      "privateEndpointNetworkPolicies": "Enabled",
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-privateEndpointsSubnet')]"
+                      }
+                    }
+                  },
+                  {
+                    "name": "snet-agents",
+                    "properties": {
+                      "addressPrefix": "[variables('agentsSubnetPrefix')]",
+                      "privateEndpointNetworkPolicies": "Enabled",
+                      "natGateway": {
+                        "id": "[resourceId('Microsoft.Network/natGateways', variables('agentsNatGatewayName'))]"
+                      },
+                      "networkSecurityGroup": {
+                        "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-agentsSubnet')]"
+                      }
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/natGateways', variables('agentsNatGatewayName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-agentsSubnet')]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-appServicesSubnet')]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg-privateEndpointsSubnet')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2024-10-01",
+              "name": "nsg-appServicesSubnet",
+              "location": "[parameters('location')]",
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "AppPlan.In.Allow.UserIP.HTTP",
+                    "properties": {
+                      "description": "Allow inbound HTTP traffic from user IP",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "80",
+                      "sourceAddressPrefix": "80.216.25.146/32",
+                      "destinationAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "access": "Allow",
+                      "priority": 100,
+                      "direction": "Inbound"
+                    }
+                  },
+                  {
+                    "name": "AppPlan.In.Allow.UserIP.HTTPS",
+                    "properties": {
+                      "description": "Allow inbound HTTPS traffic from user IP",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "443",
+                      "sourceAddressPrefix": "80.216.25.146/32",
+                      "destinationAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "access": "Allow",
+                      "priority": 110,
+                      "direction": "Inbound"
+                    }
+                  },
+                  {
+                    "name": "AppPlan.In.Deny.All",
+                    "properties": {
+                      "description": "Deny all other inbound traffic",
+                      "protocol": "*",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "*",
+                      "sourceAddressPrefix": "*",
+                      "destinationAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "access": "Deny",
+                      "priority": 1000,
+                      "direction": "Inbound"
+                    }
+                  },
+                  {
+                    "name": "AppPlan.Out.Allow.PrivateEndpoints",
+                    "properties": {
+                      "description": "Allow outbound traffic from the app service subnet to the private endpoints subnet",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "443",
+                      "sourceAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                      "access": "Allow",
+                      "priority": 100,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "AppPlan.Out.Allow.PrivateEndpoints.Sql",
+                    "properties": {
+                      "description": "Allow outbound SQL traffic from the app service subnet to the private endpoints subnet.",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "1433",
+                      "sourceAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                      "access": "Allow",
+                      "priority": 105,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "AppPlan.Out.Allow.AzureMonitor",
+                    "properties": {
+                      "description": "Allow outbound traffic from App service to the AzureMonitor ServiceTag.",
+                      "protocol": "*",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "*",
+                      "sourceAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "destinationAddressPrefix": "AzureMonitor",
+                      "access": "Allow",
+                      "priority": 110,
+                      "direction": "Outbound"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2024-10-01",
+              "name": "nsg-privateEndpointsSubnet",
+              "location": "[parameters('location')]",
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "PE.Out.Deny.All",
+                    "properties": {
+                      "description": "Deny outbound traffic from the private endpoints subnet",
+                      "protocol": "*",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "*",
+                      "sourceAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                      "destinationAddressPrefix": "*",
+                      "access": "Deny",
+                      "priority": 100,
+                      "direction": "Outbound"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/networkSecurityGroups",
+              "apiVersion": "2024-10-01",
+              "name": "nsg-agentsSubnet",
+              "location": "[parameters('location')]",
+              "properties": {
+                "securityRules": [
+                  {
+                    "name": "Agents.Out.Allow.PrivateEndpoints.Sql",
+                    "properties": {
+                      "description": "Allow the runner subnet to reach private SQL endpoints.",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "1433",
+                      "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
+                      "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                      "access": "Allow",
+                      "priority": 100,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "Agents.Out.Allow.PrivateEndpoints.Https",
+                    "properties": {
+                      "description": "Allow the runner subnet to reach private HTTPS endpoints.",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "443",
+                      "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
+                      "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
+                      "access": "Allow",
+                      "priority": 110,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "Agents.Out.Allow.Internet.Http",
+                    "properties": {
+                      "description": "Allow the runner subnet to download OS and driver packages over HTTP.",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "80",
+                      "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
+                      "destinationAddressPrefix": "Internet",
+                      "access": "Allow",
+                      "priority": 120,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "Agents.Out.Allow.Internet.Https",
+                    "properties": {
+                      "description": "Allow the runner subnet to download OS and driver packages over HTTPS.",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "443",
+                      "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
+                      "destinationAddressPrefix": "Internet",
+                      "access": "Allow",
+                      "priority": 130,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "DenyAllOutBound",
+                    "properties": {
+                      "description": "Deny outbound traffic from the build agents subnet. Note: adjust rules as needed after adding resources to the subnet",
+                      "protocol": "*",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "*",
+                      "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
+                      "destinationAddressPrefix": "*",
+                      "access": "Deny",
+                      "priority": 1000,
+                      "direction": "Outbound"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the vnet."
+              },
+              "value": "[variables('vnetName')]"
+            },
+            "appServicesSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the app service plan subnet."
+              },
+              "value": "snet-appServicePlan"
+            },
+            "privateEndpointsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the private endpoints subnet."
+              },
+              "value": "snet-privateEndpoints"
+            },
+            "agentsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the agents subnet."
+              },
+              "value": "snet-agents"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "runnerDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "vnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
+          },
+          "agentsSubnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.agentsSubnetName.value]"
+          },
+          "runnerAdminUsername": {
+            "value": "[parameters('runnerAdminUsername')]"
+          },
+          "runnerAdminPassword": {
+            "value": "[parameters('runnerAdminPassword')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "16334521724162118450"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "This is the base name for each Azure resource name (6-12 chars)"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "The resource group location"
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the virtual network to deploy the runner into"
+              }
+            },
+            "agentsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the subnet to deploy the runner into"
+              }
+            },
+            "runnerAdminUsername": {
+              "type": "string",
+              "metadata": {
+                "description": "The local admin username for the runner VM"
+              }
+            },
+            "runnerAdminPassword": {
+              "type": "securestring",
+              "metadata": {
+                "description": "The local admin password for the runner VM"
+              }
+            }
+          },
+          "variables": {
+            "runnerVmName": "[format('vm-runner-{0}', parameters('baseName'))]",
+            "runnerNicName": "[format('nic-{0}', variables('runnerVmName'))]",
+            "runnerVmSize": "Standard_E2s_v5",
+            "runnerImageSku": "22_04-lts",
+            "cloudInit": "#cloud-config\r\npackage_update: true\r\npackage_upgrade: false\r\nruncmd:\r\n  - apt-get update\r\n  - apt-get install -y curl ca-certificates gnupg lsb-release python3-pip unixodbc-dev\r\n  - install -d -m 0755 /etc/apt/keyrings\r\n  - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg\r\n  - chmod a+r /etc/apt/keyrings/microsoft.gpg\r\n  - bash -c \"echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main' > /etc/apt/sources.list.d/microsoft-prod.list\"\r\n  - bash -c \"echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ jammy main' > /etc/apt/sources.list.d/azure-cli.list\"\r\n  - apt-get update\r\n  - ACCEPT_EULA=Y apt-get install -y msodbcsql18 azure-cli\r\n  - python3 -m pip install --upgrade pip\r\n  - python3 -m pip install pyodbc\r\n"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/networkInterfaces",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('runnerNicName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "ipConfigurations": [
+                  {
+                    "name": "ipconfig1",
+                    "properties": {
+                      "privateIPAllocationMethod": "Dynamic",
+                      "subnet": {
+                        "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('agentsSubnetName'))]"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Compute/virtualMachines",
+              "apiVersion": "2024-11-01",
+              "name": "[variables('runnerVmName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "hardwareProfile": {
+                  "vmSize": "[variables('runnerVmSize')]"
+                },
+                "osProfile": {
+                  "computerName": "[variables('runnerVmName')]",
+                  "adminUsername": "[parameters('runnerAdminUsername')]",
+                  "adminPassword": "[parameters('runnerAdminPassword')]",
+                  "customData": "[base64(variables('cloudInit'))]",
+                  "linuxConfiguration": {
+                    "disablePasswordAuthentication": false,
+                    "patchSettings": {
+                      "patchMode": "ImageDefault",
+                      "assessmentMode": "ImageDefault"
+                    }
+                  }
+                },
+                "storageProfile": {
+                  "imageReference": {
+                    "publisher": "Canonical",
+                    "offer": "0001-com-ubuntu-server-jammy",
+                    "sku": "[variables('runnerImageSku')]",
+                    "version": "latest"
+                  },
+                  "osDisk": {
+                    "createOption": "FromImage",
+                    "managedDisk": {
+                      "storageAccountType": "StandardSSD_LRS"
+                    }
+                  }
+                },
+                "networkProfile": {
+                  "networkInterfaces": [
+                    {
+                      "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('runnerNicName'))]"
+                    }
+                  ]
+                },
+                "diagnosticsProfile": {
+                  "bootDiagnostics": {
+                    "enabled": true
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces', variables('runnerNicName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "runnerVmName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the runner VM."
+              },
+              "value": "[variables('runnerVmName')]"
+            },
+            "runnerPrivateIpAddress": {
+              "type": "string",
+              "metadata": {
+                "description": "The private IP address of the runner VM."
+              },
+              "value": "[reference(resourceId('Microsoft.Network/networkInterfaces', variables('runnerNicName')), '2024-10-01').ipConfigurations[0].properties.privateIPAddress]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "storageDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "vnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
+          },
+          "privateEndpointsSubnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.privateEndpointsSubnetName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "1611329732171943862"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "This is the base name for each Azure resource name (6-12 chars)"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "The resource group location"
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the virtual network to deploy the private endpoint into"
+              }
+            },
+            "privateEndpointsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the subnet to deploy the private endpoint into"
+              }
+            }
+          },
+          "variables": {
+            "storageAccountSuffix": "[replace(parameters('baseName'), '-', '')]",
+            "storageName": "[format('stapp{0}', variables('storageAccountSuffix'))]",
+            "storageSkuName": "Standard_LRS",
+            "storageDnsGroupName": "[format('{0}/default', variables('storagePrivateEndpointName'))]",
+            "storagePrivateEndpointName": "[format('pep-{0}', variables('storageName'))]",
+            "blobStorageDnsZoneName": "[format('privatelink.blob.{0}', environment().suffixes.storage)]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2025-01-01",
+              "name": "[variables('storageName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "[variables('storageSkuName')]"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "accessTier": "Hot",
+                "allowBlobPublicAccess": false,
+                "allowSharedKeyAccess": false,
+                "publicNetworkAccess": "Disabled",
+                "encryption": {
+                  "keySource": "Microsoft.Storage",
+                  "requireInfrastructureEncryption": false,
+                  "services": {
+                    "blob": {
+                      "enabled": true,
+                      "keyType": "Account"
+                    }
+                  }
+                },
+                "minimumTlsVersion": "TLS1_2",
+                "networkAcls": {
+                  "bypass": "AzureServices",
+                  "defaultAction": "Deny"
+                },
+                "supportsHttpsTrafficOnly": true
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('storagePrivateEndpointName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "subnet": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointsSubnetName'))]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "[variables('storagePrivateEndpointName')]",
+                    "properties": {
+                      "groupIds": [
+                        "blob"
+                      ],
+                      "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[variables('blobStorageDnsZoneName')]",
+              "location": "global",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', variables('blobStorageDnsZoneName'), format('{0}-link', variables('blobStorageDnsZoneName')))]",
+              "location": "global",
+              "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('blobStorageDnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('storageDnsGroupName')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[variables('blobStorageDnsZoneName')]",
+                    "properties": {
+                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('blobStorageDnsZoneName'))]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('blobStorageDnsZoneName'))]",
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('storagePrivateEndpointName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "storageName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the storage account."
+              },
+              "value": "[variables('storageName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "databaseDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "sqlEntraAdministratorLogin": {
+            "value": "[parameters('sqlEntraAdministratorLogin')]"
+          },
+          "sqlEntraAdministratorObjectId": {
+            "value": "[parameters('sqlEntraAdministratorObjectId')]"
+          },
+          "vnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
+          },
+          "privateEndpointsSubnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.privateEndpointsSubnetName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "553113579508592659"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "This is the base name for each Azure resource name (6-12 chars)"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "The resource group location"
+              }
+            },
+            "sqlEntraAdministratorLogin": {
+              "type": "string",
+              "metadata": {
+                "description": "The Microsoft Entra login name (UPN) to set as SQL Server Entra administrator."
+              }
+            },
+            "sqlEntraAdministratorObjectId": {
+              "type": "string",
+              "metadata": {
+                "description": "The Microsoft Entra object ID to set as SQL Server Entra administrator."
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the virtual network to deploy the private endpoint into"
+              }
+            },
+            "privateEndpointsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the subnet to deploy the private endpoint into"
+              }
+            }
+          },
+          "variables": {
+            "sqlServerName": "[format('sql-{0}', parameters('baseName'))]",
+            "sampleSqlDatabaseName": "sqldb-adventureworks",
+            "sqlPrivateEndpointName": "[format('pep-{0}', variables('sqlServerName'))]",
+            "sqlDnsZoneName": "[format('privatelink{0}', environment().suffixes.sqlServerHostname)]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Sql/servers",
+              "apiVersion": "2024-11-01-preview",
+              "name": "[variables('sqlServerName')]",
+              "location": "[parameters('location')]",
+              "tags": {
+                "SecurityControl": "Ignore"
+              },
+              "properties": {
+                "version": "12.0",
+                "minimalTlsVersion": "1.2",
+                "publicNetworkAccess": "Disabled",
+                "administrators": {
+                  "administratorType": "ActiveDirectory",
+                  "login": "[parameters('sqlEntraAdministratorLogin')]",
+                  "sid": "[parameters('sqlEntraAdministratorObjectId')]",
+                  "tenantId": "[tenant().tenantId]",
+                  "azureADOnlyAuthentication": true
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Sql/servers/databases",
+              "apiVersion": "2024-11-01-preview",
+              "name": "[format('{0}/{1}', variables('sqlServerName'), variables('sampleSqlDatabaseName'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Basic",
+                "tier": "Basic",
+                "capacity": 5
+              },
+              "tags": {
+                "displayName": "[variables('sampleSqlDatabaseName')]"
+              },
+              "properties": {
+                "collation": "SQL_Latin1_General_CP1_CI_AS",
+                "maxSizeBytes": 104857600,
+                "sampleName": "AdventureWorksLT"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('sqlPrivateEndpointName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "subnet": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointsSubnetName'))]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "[variables('sqlPrivateEndpointName')]",
+                    "properties": {
+                      "privateLinkServiceId": "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]",
+                      "groupIds": [
+                        "sqlServer"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[variables('sqlDnsZoneName')]",
+              "location": "global",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', variables('sqlDnsZoneName'), format('{0}-link', variables('sqlDnsZoneName')))]",
+              "location": "global",
+              "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('sqlDnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-10-01",
+              "name": "[format('{0}/{1}', variables('sqlPrivateEndpointName'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[variables('sqlDnsZoneName')]",
+                    "properties": {
+                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('sqlDnsZoneName'))]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('sqlDnsZoneName'))]",
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('sqlPrivateEndpointName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "sqlServerName": {
+              "type": "string",
+              "metadata": {
+                "description": "The SQL Server name."
+              },
+              "value": "[variables('sqlServerName')]"
+            },
+            "sqlDatabaseName": {
+              "type": "string",
+              "metadata": {
+                "description": "The SQL database name."
+              },
+              "value": "[variables('sampleSqlDatabaseName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "secretsDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "vnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
+          },
+          "privateEndpointsSubnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.privateEndpointsSubnetName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "2303226969687168862"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "This is the base name for each Azure resource name (6-12 chars)"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "The resource group location"
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the virtual network to deploy the private endpoint into"
+              }
+            },
+            "privateEndpointsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the subnet to deploy the private endpoint into"
+              }
+            }
+          },
+          "variables": {
+            "keyVaultName": "[format('kv-{0}', parameters('baseName'))]",
+            "keyVaultPrivateEndpointName": "[format('pep-{0}', variables('keyVaultName'))]",
+            "keyVaultDnsGroupName": "[format('{0}/default', variables('keyVaultPrivateEndpointName'))]",
+            "keyVaultDnsZoneName": "privatelink.vaultcore.azure.net"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2025-05-01",
+              "name": "[variables('keyVaultName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "enabledForDeployment": false,
+                "enabledForDiskEncryption": false,
+                "enabledForTemplateDeployment": false,
+                "enableRbacAuthorization": true,
+                "enableSoftDelete": true,
+                "publicNetworkAccess": "Disabled",
+                "tenantId": "[tenant().tenantId]",
+                "sku": {
+                  "name": "standard",
+                  "family": "A"
+                },
+                "networkAcls": {
+                  "defaultAction": "Deny",
+                  "bypass": "AzureServices"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('keyVaultPrivateEndpointName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "subnet": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointsSubnetName'))]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "[variables('keyVaultPrivateEndpointName')]",
+                    "properties": {
+                      "privateLinkServiceId": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+                      "groupIds": [
+                        "vault"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[variables('keyVaultDnsZoneName')]",
+              "location": "global",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', variables('keyVaultDnsZoneName'), format('{0}-link', variables('keyVaultDnsZoneName')))]",
+              "location": "global",
+              "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('keyVaultDnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-10-01",
+              "name": "[variables('keyVaultDnsGroupName')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[variables('keyVaultDnsZoneName')]",
+                    "properties": {
+                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('keyVaultDnsZoneName'))]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('keyVaultDnsZoneName'))]",
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('keyVaultPrivateEndpointName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "keyVaultName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the key vault account."
+              },
+              "value": "[variables('keyVaultName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "webappDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "baseName": {
+            "value": "[parameters('baseName')]"
+          },
+          "developmentEnvironment": {
+            "value": "[parameters('developmentEnvironment')]"
+          },
+          "storageName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storageDeploy'), '2025-04-01').outputs.storageName.value]"
+          },
+          "sqlServerName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'databaseDeploy'), '2025-04-01').outputs.sqlServerName.value]"
+          },
+          "sqlDatabaseName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'databaseDeploy'), '2025-04-01').outputs.sqlDatabaseName.value]"
+          },
+          "vnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
+          },
+          "appServicesSubnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.appServicesSubnetName.value]"
+          },
+          "privateEndpointsSubnetName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.privateEndpointsSubnetName.value]"
+          },
+          "logWorkspaceName": {
+            "value": "[variables('logWorkspaceName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "5130838919110177112"
+            }
+          },
+          "parameters": {
+            "baseName": {
+              "type": "string",
+              "metadata": {
+                "description": "This is the base name for each Azure resource name (6-12 chars)"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "The resource group location"
+              }
+            },
+            "developmentEnvironment": {
+              "type": "bool",
+              "metadata": {
+                "description": "Optional. When true will deploy a cost-optimised environment for development purposes. Note that when this param is true, the deployment is not suitable or recommended for Production environments. Default = false."
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the virtual network to deploy the private endpoint into"
+              }
+            },
+            "appServicesSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the subnet to deploy the app services into"
+              }
+            },
+            "privateEndpointsSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the subnet to deploy the private endpoint into"
+              }
+            },
+            "storageName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the storage account where the web deploy package is located"
+              }
+            },
+            "logWorkspaceName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the Log Analytics workspace to send logs to"
+              }
+            },
+            "sqlServerName": {
+              "type": "string",
+              "metadata": {
+                "description": "The SQL Server name used by the application"
+              }
+            },
+            "sqlDatabaseName": {
+              "type": "string",
+              "metadata": {
+                "description": "The SQL Database name used by the application"
+              }
+            }
+          },
+          "variables": {
+            "appName": "[format('app-{0}', parameters('baseName'))]",
+            "appServicePlanName": "[format('asp-{0}{1}', variables('appName'), uniqueString(subscription().subscriptionId))]",
+            "appServiceManagedIdentityName": "[format('id-{0}', variables('appName'))]",
+            "appServicePrivateEndpointName": "[format('pep-{0}', variables('appName'))]",
+            "appInsightsName": "[format('appinsights-{0}', variables('appName'))]",
+            "appServicePlanBasicSku": {
+              "name": "B1",
+              "capacity": 1
+            },
+            "appServicesDnsZoneName": "privatelink.azurewebsites.net"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2025-01-31-preview",
+              "name": "[variables('appServiceManagedIdentityName')]",
+              "location": "[parameters('location')]"
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageName'))]",
+              "name": "[guid(resourceGroup().id, variables('appServiceManagedIdentityName'), subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')]",
+                "principalType": "ServicePrincipal",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName')), '2025-01-31-preview').principalId]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2024-11-01",
+              "name": "[variables('appServicePlanName')]",
+              "location": "[parameters('location')]",
+              "sku": "[variables('appServicePlanBasicSku')]",
+              "kind": "linux",
+              "properties": {
+                "zoneRedundant": false,
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2024-11-01",
+              "name": "[variables('appName')]",
+              "location": "[parameters('location')]",
+              "kind": "app,linux",
+              "tags": {
+                "azd-service-name": "api",
+                "deployment-environment": "[if(parameters('developmentEnvironment'), 'development', 'production')]"
+              },
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName')))]": {}
+                }
+              },
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appServicesSubnetName'))]",
+                "httpsOnly": true,
+                "hostNamesDisabled": false,
+                "publicNetworkAccess": "Disabled",
+                "siteConfig": {
+                  "vnetRouteAllEnabled": true,
+                  "http20Enabled": true,
+                  "alwaysOn": true,
+                  "linuxFxVersion": "PYTHON|3.12",
+                  "appCommandLine": "gunicorn --bind=0.0.0.0:8000 --timeout 120 app:app"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName'))]",
+                "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', parameters('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, variables('appServiceManagedIdentityName'), subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', variables('appName'), 'appsettings')]",
+              "properties": {
+                "SCM_DO_BUILD_DURING_DEPLOYMENT": "1",
+                "AZURE_CLIENT_ID": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName')), '2025-01-31-preview').clientId]",
+                "AZURE_SQL_SERVER": "[format('{0}{1}', parameters('sqlServerName'), environment().suffixes.sqlServerHostname)]",
+                "AZURE_SQL_DATABASE": "[parameters('sqlDatabaseName')]",
+                "AZURE_STORAGE_ACCOUNT": "[parameters('storageName')]",
+                "APPINSIGHTS_INSTRUMENTATIONKEY": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]",
+                "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]",
+                "ApplicationInsightsAgent_EXTENSION_VERSION": "~2"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName'))]",
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', variables('appName'), 'scm')]",
+              "properties": {
+                "allow": true
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
+              "apiVersion": "2024-11-01",
+              "name": "[format('{0}/{1}', variables('appName'), 'ftp')]",
+              "properties": {
+                "allow": false
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-10-01",
+              "name": "[format('{0}-sites', variables('appServicePrivateEndpointName'))]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "subnet": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointsSubnetName'))]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "[format('{0}-sites', variables('appServicePrivateEndpointName'))]",
+                    "properties": {
+                      "privateLinkServiceId": "[resourceId('Microsoft.Web/sites', variables('appName'))]",
+                      "groupIds": [
+                        "sites"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[variables('appServicesDnsZoneName')]",
+              "location": "global",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', variables('appServicesDnsZoneName'), format('{0}-link', variables('appServicesDnsZoneName')))]",
+              "location": "global",
+              "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('appServicesDnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-10-01",
+              "name": "[format('{0}/{1}', format('{0}-sites', variables('appServicePrivateEndpointName')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "privatelink.azurewebsites.net",
+                    "properties": {
+                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('appServicesDnsZoneName'))]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('appServicesDnsZoneName'))]",
+                "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-sites', variables('appServicePrivateEndpointName')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[format('Microsoft.Web/serverfarms/{0}', variables('appServicePlanName'))]",
+              "name": "[format('{0}-diagnosticSettings', variables('appServicePlanName'))]",
+              "properties": {
+                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logWorkspaceName'))]",
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[format('Microsoft.Web/sites/{0}', variables('appName'))]",
+              "name": "[format('{0}-diagnosticSettings', variables('appName'))]",
+              "properties": {
+                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logWorkspaceName'))]",
+                "logs": [
+                  {
+                    "category": "AppServiceHTTPLogs",
+                    "categoryGroup": null,
+                    "enabled": true
+                  },
+                  {
+                    "category": "AppServiceConsoleLogs",
+                    "categoryGroup": null,
+                    "enabled": true
+                  },
+                  {
+                    "category": "AppServiceAppLogs",
+                    "categoryGroup": null,
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/autoscalesettings",
+              "apiVersion": "2022-10-01",
+              "name": "[format('{0}-autoscale', variables('appServicePlanName'))]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "enabled": true,
+                "targetResourceUri": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "profiles": [
+                  {
+                    "name": "Scale out condition",
+                    "capacity": {
+                      "maximum": "5",
+                      "default": "1",
+                      "minimum": "1"
+                    },
+                    "rules": [
+                      {
+                        "scaleAction": {
+                          "type": "ChangeCount",
+                          "direction": "Increase",
+                          "cooldown": "PT5M",
+                          "value": "1"
+                        },
+                        "metricTrigger": {
+                          "metricName": "CpuPercentage",
+                          "metricNamespace": "microsoft.web/serverfarms",
+                          "operator": "GreaterThan",
+                          "timeAggregation": "Average",
+                          "threshold": 70,
+                          "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                          "timeWindow": "PT10M",
+                          "timeGrain": "PT1M",
+                          "statistic": "Average"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+                "[extensionResourceId(resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName')), 'Microsoft.Insights/diagnosticSettings', format('{0}-diagnosticSettings', variables('appServicePlanName')))]",
+                "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/components",
+              "apiVersion": "2020-02-02",
+              "name": "[variables('appInsightsName')]",
+              "location": "[parameters('location')]",
+              "kind": "web",
+              "properties": {
+                "Application_Type": "web",
+                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logWorkspaceName'))]"
+              }
+            }
+          ],
+          "outputs": {
+            "appServicePlanName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the app service plan."
+              },
+              "value": "[variables('appServicePlanName')]"
+            },
+            "appName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the web app."
+              },
+              "value": "[variables('appName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'databaseDeploy')]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logWorkspaceName'))]",
+        "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]",
+        "[resourceId('Microsoft.Resources/deployments', 'storageDeploy')]"
+      ]
+    }
+  ]
+}

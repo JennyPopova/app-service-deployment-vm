@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "baseName": {
+      "value": "${BASE_NAME}"
+    },
+    "sqlEntraAdministratorLogin": {
+      "value": "${SQL_ENTRA_ADMIN_LOGIN}"
+    },
+    "sqlEntraAdministratorObjectId": {
+      "value": "${SQL_ENTRA_ADMIN_OBJECT_ID}"
+    },
+    "developmentEnvironment": {
+      "value": true
+    },
+    "runnerAdminUsername": {
+      "value": "${RUNNER_ADMIN_USERNAME}"
+    },
+    "runnerAdminPassword": {
+      "value": "${RUNNER_ADMIN_PASSWORD}"
+    }
+  }
+}
