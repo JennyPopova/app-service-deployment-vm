@@ -31,16 +31,13 @@ package_update: true
 package_upgrade: false
 runcmd:
   - apt-get update
-  - apt-get install -y curl ca-certificates gnupg lsb-release python3-pip unixodbc-dev
+  - apt-get install -y curl ca-certificates gnupg lsb-release
   - install -d -m 0755 /etc/apt/keyrings
   - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
   - chmod a+r /etc/apt/keyrings/microsoft.gpg
-  - bash -c "echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main' > /etc/apt/sources.list.d/microsoft-prod.list"
   - bash -c "echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ jammy main' > /etc/apt/sources.list.d/azure-cli.list"
   - apt-get update
-  - ACCEPT_EULA=Y apt-get install -y msodbcsql18 azure-cli
-  - python3 -m pip install --upgrade pip
-  - python3 -m pip install pyodbc
+  - apt-get install -y azure-cli
 '''
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-10-01' existing = {

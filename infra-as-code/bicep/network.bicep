@@ -8,6 +8,14 @@ param baseName string
 @description('The resource group location')
 param location string = resourceGroup().location
 
+@description('Destination prefix for external database outbound traffic from the app subnet (for example: Internet, a Service Tag, or a specific CIDR).')
+param externalDatabaseDestinationPrefix string
+
+@description('Destination port for external database outbound traffic from the app subnet.')
+@minValue(1)
+@maxValue(65535)
+param externalDatabasePort int
+
 // variables
 var vnetName = 'vnet-${baseName}'
 var agentsNatGatewayName = 'nat-agents-${baseName}'
@@ -181,20 +189,6 @@ resource appServiceSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01
         }
       }
       {
-        name: 'AppPlan.Out.Allow.PrivateEndpoints.Sql'
-        properties: {
-          description: 'Allow outbound SQL traffic from the app service subnet to the private endpoints subnet.'
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '1433'
-          sourceAddressPrefix: appServicesSubnetPrefix
-          destinationAddressPrefix: privateEndpointsSubnetPrefix
-          access: 'Allow'
-          priority: 105
-          direction: 'Outbound'
-        }
-      }
-      {
         name: 'AppPlan.Out.Allow.AzureMonitor'
         properties: {
           description: 'Allow outbound traffic from App service to the AzureMonitor ServiceTag.'
@@ -205,6 +199,20 @@ resource appServiceSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01
           destinationAddressPrefix: 'AzureMonitor'
           access: 'Allow'
           priority: 110
+          direction: 'Outbound'
+        }
+      }
+      {
+        name: 'AppPlan.Out.Allow.ExternalDatabase'
+        properties: {
+          description: 'Allow outbound traffic from the app service subnet to an external database endpoint.'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: string(externalDatabasePort)
+          sourceAddressPrefix: appServicesSubnetPrefix
+          destinationAddressPrefix: externalDatabaseDestinationPrefix
+          access: 'Allow'
+          priority: 120
           direction: 'Outbound'
         }
       }
@@ -243,20 +251,6 @@ resource agentsSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01' = 
   properties: {
     securityRules: [
       {
-        name: 'Agents.Out.Allow.PrivateEndpoints.Sql'
-        properties: {
-          description: 'Allow the runner subnet to reach private SQL endpoints.'
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRange: '1433'
-          sourceAddressPrefix: agentsSubnetPrefix
-          destinationAddressPrefix: privateEndpointsSubnetPrefix
-          access: 'Allow'
-          priority: 100
-          direction: 'Outbound'
-        }
-      }
-      {
         name: 'Agents.Out.Allow.PrivateEndpoints.Https'
         properties: {
           description: 'Allow the runner subnet to reach private HTTPS endpoints.'
@@ -266,7 +260,7 @@ resource agentsSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01' = 
           sourceAddressPrefix: agentsSubnetPrefix
           destinationAddressPrefix: privateEndpointsSubnetPrefix
           access: 'Allow'
-          priority: 110
+          priority: 100
           direction: 'Outbound'
         }
       }
@@ -280,7 +274,7 @@ resource agentsSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01' = 
           sourceAddressPrefix: agentsSubnetPrefix
           destinationAddressPrefix: 'Internet'
           access: 'Allow'
-          priority: 120
+          priority: 110
           direction: 'Outbound'
         }
       }
@@ -294,7 +288,7 @@ resource agentsSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01' = 
           sourceAddressPrefix: agentsSubnetPrefix
           destinationAddressPrefix: 'Internet'
           access: 'Allow'
-          priority: 130
+          priority: 120
           direction: 'Outbound'
         }
       }

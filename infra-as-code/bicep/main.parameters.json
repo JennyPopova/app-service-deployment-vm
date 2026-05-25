@@ -8,14 +8,26 @@
     "baseName": {
       "value": "${BASE_NAME}"
     },
-    "sqlEntraAdministratorLogin": {
-      "value": "${SQL_ENTRA_ADMIN_LOGIN}"
-    },
-    "sqlEntraAdministratorObjectId": {
-      "value": "${SQL_ENTRA_ADMIN_OBJECT_ID}"
-    },
     "developmentEnvironment": {
       "value": true
+    },
+    "externalDatabaseDestinationPrefix": {
+      "value": "*"
+    },
+    "externalDatabasePort": {
+      "value": 1433
+    },
+    "sqlServer": {
+      "value": "${SQL_SERVER}"
+    },
+    "sqlDatabase": {
+      "value": "${SQL_DATABASE}"
+    },
+    "sqlUsername": {
+      "value": "${SQL_USERNAME}"
+    },
+    "sqlPassword": {
+      "value": "${SQL_PASSWORD}"
     },
     "runnerAdminUsername": {
       "value": "${RUNNER_ADMIN_USERNAME}"

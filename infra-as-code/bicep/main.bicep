@@ -6,14 +6,16 @@ param location string = resourceGroup().location
 @maxLength(12)
 param baseName string
 
-@description('The Microsoft Entra login name (UPN) to set as SQL Server Entra administrator.')
-param sqlEntraAdministratorLogin string
-
-@description('The Microsoft Entra object ID to set as SQL Server Entra administrator.')
-param sqlEntraAdministratorObjectId string
-
 @description('Optional. When true will deploy a cost-optimised environment for development purposes. Note that when this param is true, the deployment is not suitable or recommended for Production environments. Default = false.')
 param developmentEnvironment bool = false
+
+@description('Destination prefix for external database outbound traffic from the app subnet (for example: Internet, a Service Tag, or a specific CIDR).')
+param externalDatabaseDestinationPrefix string = 'Internet'
+
+@description('Destination port for external database outbound traffic from the app subnet.')
+@minValue(1)
+@maxValue(65535)
+param externalDatabasePort int = 1433
 
 @description('The local admin username for the private runner VM.')
 param runnerAdminUsername string = 'azureuser'
@@ -21,6 +23,21 @@ param runnerAdminUsername string = 'azureuser'
 @description('The local admin password for the private runner VM.')
 @secure()
 param runnerAdminPassword string
+
+@description('Database server hostname or FQDN to store in Key Vault.')
+param sqlServer string = 'sql-server-jn'
+
+@description('Database name to store in Key Vault.')
+param sqlDatabase string = 'alfa-db'
+
+@description('Database username to store in Key Vault.')
+param sqlUsername string = 'alfa_read_user'
+
+@description('Database password to store in Key Vault.')
+@secure()
+param sqlPassword string
+
+var keyVaultSecretsUserRoleDefinitionId = '4633458b-17de-408a-b874-0445c86b69e6'
 
 var logWorkspaceName = 'log-${baseName}'
 
@@ -43,6 +60,8 @@ module networkModule 'network.bicep' = {
   params: {
     location: location
     baseName: baseName
+    externalDatabaseDestinationPrefix: externalDatabaseDestinationPrefix
+    externalDatabasePort: externalDatabasePort
   }
 }
 
@@ -70,19 +89,6 @@ module storageModule 'storage.bicep' = {
   }
 }
 
-// Deploy a SQL server with a sample database, a private endpoint and a DNS zone
-module databaseModule 'database.bicep' = {
-  name: 'databaseDeploy'
-  params: {
-    location: location
-    baseName: baseName
-    sqlEntraAdministratorLogin: sqlEntraAdministratorLogin
-    sqlEntraAdministratorObjectId: sqlEntraAdministratorObjectId
-    vnetName: networkModule.outputs.vnetName
-    privateEndpointsSubnetName: networkModule.outputs.privateEndpointsSubnetName
-  }
-}
-
 // Deploy a Key Vault with a private endpoint and DNS zone
 module secretsModule 'secrets.bicep' = {
   name: 'secretsDeploy'
@@ -91,6 +97,19 @@ module secretsModule 'secrets.bicep' = {
     baseName: baseName
     vnetName: networkModule.outputs.vnetName
     privateEndpointsSubnetName: networkModule.outputs.privateEndpointsSubnetName
+    sqlServer: sqlServer
+    sqlDatabase: sqlDatabase
+    sqlUsername: sqlUsername
+    sqlPassword: sqlPassword
+  }
+}
+
+module keyVaultSecretsUserRoleAssignmentModule 'modules/keyvaultRoleAssignment.bicep' = {
+  name: 'keyVaultSecretsUserRoleAssignmentDeploy'
+  params: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleDefinitionId)
+    principalId: webappModule.outputs.appServiceManagedIdentityPrincipalId
+    keyVaultName: secretsModule.outputs.keyVaultName
   }
 }
 
@@ -102,8 +121,7 @@ module webappModule 'webapp.bicep' = {
     baseName: baseName
     developmentEnvironment: developmentEnvironment
     storageName: storageModule.outputs.storageName
-    sqlServerName: databaseModule.outputs.sqlServerName
-    sqlDatabaseName: databaseModule.outputs.sqlDatabaseName
+    keyVaultName: secretsModule.outputs.keyVaultName
     vnetName: networkModule.outputs.vnetName
     appServicesSubnetName: networkModule.outputs.appServicesSubnetName
     privateEndpointsSubnetName: networkModule.outputs.privateEndpointsSubnetName

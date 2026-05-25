@@ -1,0 +1,3 @@
+{
+  "sql_query": "SELECT TOP 20 * FROM SalesLT.Product"
+}

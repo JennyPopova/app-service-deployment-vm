@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "1702219411453336517"
+      "templateHash": "6110857577772538624"
     }
   },
   "parameters": {
@@ -24,23 +24,27 @@
         "description": "This is the base name for each Azure resource name (3-12 chars, lowercase letters, numbers, and hyphens)."
       }
     },
-    "sqlEntraAdministratorLogin": {
-      "type": "string",
-      "metadata": {
-        "description": "The Microsoft Entra login name (UPN) to set as SQL Server Entra administrator."
-      }
-    },
-    "sqlEntraAdministratorObjectId": {
-      "type": "string",
-      "metadata": {
-        "description": "The Microsoft Entra object ID to set as SQL Server Entra administrator."
-      }
-    },
     "developmentEnvironment": {
       "type": "bool",
       "defaultValue": false,
       "metadata": {
         "description": "Optional. When true will deploy a cost-optimised environment for development purposes. Note that when this param is true, the deployment is not suitable or recommended for Production environments. Default = false."
+      }
+    },
+    "externalDatabaseDestinationPrefix": {
+      "type": "string",
+      "defaultValue": "Internet",
+      "metadata": {
+        "description": "Destination prefix for external database outbound traffic from the app subnet (for example: Internet, a Service Tag, or a specific CIDR)."
+      }
+    },
+    "externalDatabasePort": {
+      "type": "int",
+      "defaultValue": 1433,
+      "minValue": 1,
+      "maxValue": 65535,
+      "metadata": {
+        "description": "Destination port for external database outbound traffic from the app subnet."
       }
     },
     "runnerAdminUsername": {
@@ -55,9 +59,37 @@
       "metadata": {
         "description": "The local admin password for the private runner VM."
       }
+    },
+    "sqlServer": {
+      "type": "string",
+      "defaultValue": "sql-server-jn",
+      "metadata": {
+        "description": "Database server hostname or FQDN to store in Key Vault."
+      }
+    },
+    "sqlDatabase": {
+      "type": "string",
+      "defaultValue": "alfa-db",
+      "metadata": {
+        "description": "Database name to store in Key Vault."
+      }
+    },
+    "sqlUsername": {
+      "type": "string",
+      "defaultValue": "alfa_read_user",
+      "metadata": {
+        "description": "Database username to store in Key Vault."
+      }
+    },
+    "sqlPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Database password to store in Key Vault."
+      }
     }
   },
   "variables": {
+    "keyVaultSecretsUserRoleDefinitionId": "4633458b-17de-408a-b874-0445c86b69e6",
     "logWorkspaceName": "[format('log-{0}', parameters('baseName'))]"
   },
   "resources": [
@@ -88,6 +120,12 @@
           },
           "baseName": {
             "value": "[parameters('baseName')]"
+          },
+          "externalDatabaseDestinationPrefix": {
+            "value": "[parameters('externalDatabaseDestinationPrefix')]"
+          },
+          "externalDatabasePort": {
+            "value": "[parameters('externalDatabasePort')]"
           }
         },
         "template": {
@@ -97,7 +135,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "11762847190651016293"
+              "templateHash": "5487327069170528294"
             }
           },
           "parameters": {
@@ -112,6 +150,20 @@
               "defaultValue": "[resourceGroup().location]",
               "metadata": {
                 "description": "The resource group location"
+              }
+            },
+            "externalDatabaseDestinationPrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Destination prefix for external database outbound traffic from the app subnet (for example: Internet, a Service Tag, or a specific CIDR)."
+              }
+            },
+            "externalDatabasePort": {
+              "type": "int",
+              "minValue": 1,
+              "maxValue": 65535,
+              "metadata": {
+                "description": "Destination port for external database outbound traffic from the app subnet."
               }
             }
           },
@@ -284,20 +336,6 @@
                     }
                   },
                   {
-                    "name": "AppPlan.Out.Allow.PrivateEndpoints.Sql",
-                    "properties": {
-                      "description": "Allow outbound SQL traffic from the app service subnet to the private endpoints subnet.",
-                      "protocol": "Tcp",
-                      "sourcePortRange": "*",
-                      "destinationPortRange": "1433",
-                      "sourceAddressPrefix": "[variables('appServicesSubnetPrefix')]",
-                      "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
-                      "access": "Allow",
-                      "priority": 105,
-                      "direction": "Outbound"
-                    }
-                  },
-                  {
                     "name": "AppPlan.Out.Allow.AzureMonitor",
                     "properties": {
                       "description": "Allow outbound traffic from App service to the AzureMonitor ServiceTag.",
@@ -308,6 +346,20 @@
                       "destinationAddressPrefix": "AzureMonitor",
                       "access": "Allow",
                       "priority": 110,
+                      "direction": "Outbound"
+                    }
+                  },
+                  {
+                    "name": "AppPlan.Out.Allow.ExternalDatabase",
+                    "properties": {
+                      "description": "Allow outbound traffic from the app service subnet to an external database endpoint.",
+                      "protocol": "Tcp",
+                      "sourcePortRange": "*",
+                      "destinationPortRange": "[string(parameters('externalDatabasePort'))]",
+                      "sourceAddressPrefix": "[variables('appServicesSubnetPrefix')]",
+                      "destinationAddressPrefix": "[parameters('externalDatabaseDestinationPrefix')]",
+                      "access": "Allow",
+                      "priority": 120,
                       "direction": "Outbound"
                     }
                   }
@@ -346,20 +398,6 @@
               "properties": {
                 "securityRules": [
                   {
-                    "name": "Agents.Out.Allow.PrivateEndpoints.Sql",
-                    "properties": {
-                      "description": "Allow the runner subnet to reach private SQL endpoints.",
-                      "protocol": "Tcp",
-                      "sourcePortRange": "*",
-                      "destinationPortRange": "1433",
-                      "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
-                      "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
-                      "access": "Allow",
-                      "priority": 100,
-                      "direction": "Outbound"
-                    }
-                  },
-                  {
                     "name": "Agents.Out.Allow.PrivateEndpoints.Https",
                     "properties": {
                       "description": "Allow the runner subnet to reach private HTTPS endpoints.",
@@ -369,7 +407,7 @@
                       "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
                       "destinationAddressPrefix": "[variables('privateEndpointsSubnetPrefix')]",
                       "access": "Allow",
-                      "priority": 110,
+                      "priority": 100,
                       "direction": "Outbound"
                     }
                   },
@@ -383,7 +421,7 @@
                       "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
                       "destinationAddressPrefix": "Internet",
                       "access": "Allow",
-                      "priority": 120,
+                      "priority": 110,
                       "direction": "Outbound"
                     }
                   },
@@ -397,7 +435,7 @@
                       "sourceAddressPrefix": "[variables('agentsSubnetPrefix')]",
                       "destinationAddressPrefix": "Internet",
                       "access": "Allow",
-                      "priority": 130,
+                      "priority": 120,
                       "direction": "Outbound"
                     }
                   },
@@ -488,7 +526,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "16334521724162118450"
+              "templateHash": "13980877022069886180"
             }
           },
           "parameters": {
@@ -535,7 +573,7 @@
             "runnerNicName": "[format('nic-{0}', variables('runnerVmName'))]",
             "runnerVmSize": "Standard_E2s_v5",
             "runnerImageSku": "22_04-lts",
-            "cloudInit": "#cloud-config\r\npackage_update: true\r\npackage_upgrade: false\r\nruncmd:\r\n  - apt-get update\r\n  - apt-get install -y curl ca-certificates gnupg lsb-release python3-pip unixodbc-dev\r\n  - install -d -m 0755 /etc/apt/keyrings\r\n  - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg\r\n  - chmod a+r /etc/apt/keyrings/microsoft.gpg\r\n  - bash -c \"echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main' > /etc/apt/sources.list.d/microsoft-prod.list\"\r\n  - bash -c \"echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ jammy main' > /etc/apt/sources.list.d/azure-cli.list\"\r\n  - apt-get update\r\n  - ACCEPT_EULA=Y apt-get install -y msodbcsql18 azure-cli\r\n  - python3 -m pip install --upgrade pip\r\n  - python3 -m pip install pyodbc\r\n"
+            "cloudInit": "#cloud-config\r\npackage_update: true\r\npackage_upgrade: false\r\nruncmd:\r\n  - apt-get update\r\n  - apt-get install -y curl ca-certificates gnupg lsb-release\r\n  - install -d -m 0755 /etc/apt/keyrings\r\n  - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg\r\n  - chmod a+r /etc/apt/keyrings/microsoft.gpg\r\n  - bash -c \"echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ jammy main' > /etc/apt/sources.list.d/azure-cli.list\"\r\n  - apt-get update\r\n  - apt-get install -y azure-cli\r\n"
           },
           "resources": [
             {
@@ -822,223 +860,6 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "databaseDeploy",
-      "properties": {
-        "expressionEvaluationOptions": {
-          "scope": "inner"
-        },
-        "mode": "Incremental",
-        "parameters": {
-          "location": {
-            "value": "[parameters('location')]"
-          },
-          "baseName": {
-            "value": "[parameters('baseName')]"
-          },
-          "sqlEntraAdministratorLogin": {
-            "value": "[parameters('sqlEntraAdministratorLogin')]"
-          },
-          "sqlEntraAdministratorObjectId": {
-            "value": "[parameters('sqlEntraAdministratorObjectId')]"
-          },
-          "vnetName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
-          },
-          "privateEndpointsSubnetName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.privateEndpointsSubnetName.value]"
-          }
-        },
-        "template": {
-          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-          "contentVersion": "1.0.0.0",
-          "metadata": {
-            "_generator": {
-              "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "553113579508592659"
-            }
-          },
-          "parameters": {
-            "baseName": {
-              "type": "string",
-              "metadata": {
-                "description": "This is the base name for each Azure resource name (6-12 chars)"
-              }
-            },
-            "location": {
-              "type": "string",
-              "defaultValue": "[resourceGroup().location]",
-              "metadata": {
-                "description": "The resource group location"
-              }
-            },
-            "sqlEntraAdministratorLogin": {
-              "type": "string",
-              "metadata": {
-                "description": "The Microsoft Entra login name (UPN) to set as SQL Server Entra administrator."
-              }
-            },
-            "sqlEntraAdministratorObjectId": {
-              "type": "string",
-              "metadata": {
-                "description": "The Microsoft Entra object ID to set as SQL Server Entra administrator."
-              }
-            },
-            "vnetName": {
-              "type": "string",
-              "metadata": {
-                "description": "The name of the virtual network to deploy the private endpoint into"
-              }
-            },
-            "privateEndpointsSubnetName": {
-              "type": "string",
-              "metadata": {
-                "description": "The name of the subnet to deploy the private endpoint into"
-              }
-            }
-          },
-          "variables": {
-            "sqlServerName": "[format('sql-{0}', parameters('baseName'))]",
-            "sampleSqlDatabaseName": "sqldb-adventureworks",
-            "sqlPrivateEndpointName": "[format('pep-{0}', variables('sqlServerName'))]",
-            "sqlDnsZoneName": "[format('privatelink{0}', environment().suffixes.sqlServerHostname)]"
-          },
-          "resources": [
-            {
-              "type": "Microsoft.Sql/servers",
-              "apiVersion": "2024-11-01-preview",
-              "name": "[variables('sqlServerName')]",
-              "location": "[parameters('location')]",
-              "tags": {
-                "SecurityControl": "Ignore"
-              },
-              "properties": {
-                "version": "12.0",
-                "minimalTlsVersion": "1.2",
-                "publicNetworkAccess": "Disabled",
-                "administrators": {
-                  "administratorType": "ActiveDirectory",
-                  "login": "[parameters('sqlEntraAdministratorLogin')]",
-                  "sid": "[parameters('sqlEntraAdministratorObjectId')]",
-                  "tenantId": "[tenant().tenantId]",
-                  "azureADOnlyAuthentication": true
-                }
-              }
-            },
-            {
-              "type": "Microsoft.Sql/servers/databases",
-              "apiVersion": "2024-11-01-preview",
-              "name": "[format('{0}/{1}', variables('sqlServerName'), variables('sampleSqlDatabaseName'))]",
-              "location": "[parameters('location')]",
-              "sku": {
-                "name": "Basic",
-                "tier": "Basic",
-                "capacity": 5
-              },
-              "tags": {
-                "displayName": "[variables('sampleSqlDatabaseName')]"
-              },
-              "properties": {
-                "collation": "SQL_Latin1_General_CP1_CI_AS",
-                "maxSizeBytes": 104857600,
-                "sampleName": "AdventureWorksLT"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints",
-              "apiVersion": "2024-10-01",
-              "name": "[variables('sqlPrivateEndpointName')]",
-              "location": "[parameters('location')]",
-              "properties": {
-                "subnet": {
-                  "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointsSubnetName'))]"
-                },
-                "privateLinkServiceConnections": [
-                  {
-                    "name": "[variables('sqlPrivateEndpointName')]",
-                    "properties": {
-                      "privateLinkServiceId": "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]",
-                      "groupIds": [
-                        "sqlServer"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Sql/servers', variables('sqlServerName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateDnsZones",
-              "apiVersion": "2024-06-01",
-              "name": "[variables('sqlDnsZoneName')]",
-              "location": "global",
-              "properties": {}
-            },
-            {
-              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
-              "apiVersion": "2024-06-01",
-              "name": "[format('{0}/{1}', variables('sqlDnsZoneName'), format('{0}-link', variables('sqlDnsZoneName')))]",
-              "location": "global",
-              "properties": {
-                "registrationEnabled": false,
-                "virtualNetwork": {
-                  "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
-                }
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/privateDnsZones', variables('sqlDnsZoneName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
-              "apiVersion": "2024-10-01",
-              "name": "[format('{0}/{1}', variables('sqlPrivateEndpointName'), 'default')]",
-              "properties": {
-                "privateDnsZoneConfigs": [
-                  {
-                    "name": "[variables('sqlDnsZoneName')]",
-                    "properties": {
-                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('sqlDnsZoneName'))]"
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/privateDnsZones', variables('sqlDnsZoneName'))]",
-                "[resourceId('Microsoft.Network/privateEndpoints', variables('sqlPrivateEndpointName'))]"
-              ]
-            }
-          ],
-          "outputs": {
-            "sqlServerName": {
-              "type": "string",
-              "metadata": {
-                "description": "The SQL Server name."
-              },
-              "value": "[variables('sqlServerName')]"
-            },
-            "sqlDatabaseName": {
-              "type": "string",
-              "metadata": {
-                "description": "The SQL database name."
-              },
-              "value": "[variables('sampleSqlDatabaseName')]"
-            }
-          }
-        }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]"
-      ]
-    },
-    {
-      "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2025-04-01",
       "name": "secretsDeploy",
       "properties": {
         "expressionEvaluationOptions": {
@@ -1057,6 +878,18 @@
           },
           "privateEndpointsSubnetName": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.privateEndpointsSubnetName.value]"
+          },
+          "sqlServer": {
+            "value": "[parameters('sqlServer')]"
+          },
+          "sqlDatabase": {
+            "value": "[parameters('sqlDatabase')]"
+          },
+          "sqlUsername": {
+            "value": "[parameters('sqlUsername')]"
+          },
+          "sqlPassword": {
+            "value": "[parameters('sqlPassword')]"
           }
         },
         "template": {
@@ -1066,7 +899,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "2303226969687168862"
+              "templateHash": "16739487083376599022"
             }
           },
           "parameters": {
@@ -1093,6 +926,30 @@
               "type": "string",
               "metadata": {
                 "description": "The name of the subnet to deploy the private endpoint into"
+              }
+            },
+            "sqlServer": {
+              "type": "string",
+              "metadata": {
+                "description": "Database server hostname or FQDN to store as a Key Vault secret."
+              }
+            },
+            "sqlDatabase": {
+              "type": "string",
+              "metadata": {
+                "description": "Database name to store as a Key Vault secret."
+              }
+            },
+            "sqlUsername": {
+              "type": "string",
+              "metadata": {
+                "description": "Database username to store as a Key Vault secret."
+              }
+            },
+            "sqlPassword": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Database password to store as a Key Vault secret."
               }
             }
           },
@@ -1191,6 +1048,50 @@
                 "[resourceId('Microsoft.Network/privateDnsZones', variables('keyVaultDnsZoneName'))]",
                 "[resourceId('Microsoft.Network/privateEndpoints', variables('keyVaultPrivateEndpointName'))]"
               ]
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults/secrets",
+              "apiVersion": "2025-05-01",
+              "name": "[format('{0}/{1}', variables('keyVaultName'), 'sql-server')]",
+              "properties": {
+                "value": "[parameters('sqlServer')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults/secrets",
+              "apiVersion": "2025-05-01",
+              "name": "[format('{0}/{1}', variables('keyVaultName'), 'sql-database')]",
+              "properties": {
+                "value": "[parameters('sqlDatabase')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults/secrets",
+              "apiVersion": "2025-05-01",
+              "name": "[format('{0}/{1}', variables('keyVaultName'), 'sql-username')]",
+              "properties": {
+                "value": "[parameters('sqlUsername')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.KeyVault/vaults/secrets",
+              "apiVersion": "2025-05-01",
+              "name": "[format('{0}/{1}', variables('keyVaultName'), 'sql-password')]",
+              "properties": {
+                "value": "[parameters('sqlPassword')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+              ]
             }
           ],
           "outputs": {
@@ -1206,6 +1107,76 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "keyVaultSecretsUserRoleAssignmentDeploy",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "roleDefinitionId": {
+            "value": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultSecretsUserRoleDefinitionId'))]"
+          },
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'webappDeploy'), '2025-04-01').outputs.appServiceManagedIdentityPrincipalId.value]"
+          },
+          "keyVaultName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'secretsDeploy'), '2025-04-01').outputs.keyVaultName.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "2275287771213057904"
+            }
+          },
+          "parameters": {
+            "roleDefinitionId": {
+              "type": "string",
+              "metadata": {
+                "description": "The Id of the role definition."
+              }
+            },
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "The principalId property of the managed identity."
+              }
+            },
+            "keyVaultName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the key vault resource."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "name": "[guid(resourceGroup().id, parameters('principalId'), parameters('roleDefinitionId'))]",
+              "properties": {
+                "roleDefinitionId": "[parameters('roleDefinitionId')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'secretsDeploy')]",
+        "[resourceId('Microsoft.Resources/deployments', 'webappDeploy')]"
       ]
     },
     {
@@ -1230,11 +1201,8 @@
           "storageName": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storageDeploy'), '2025-04-01').outputs.storageName.value]"
           },
-          "sqlServerName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'databaseDeploy'), '2025-04-01').outputs.sqlServerName.value]"
-          },
-          "sqlDatabaseName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'databaseDeploy'), '2025-04-01').outputs.sqlDatabaseName.value]"
+          "keyVaultName": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'secretsDeploy'), '2025-04-01').outputs.keyVaultName.value]"
           },
           "vnetName": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'networkDeploy'), '2025-04-01').outputs.vnetName.value]"
@@ -1256,7 +1224,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "5130838919110177112"
+              "templateHash": "6256132021932899129"
             }
           },
           "parameters": {
@@ -1303,22 +1271,16 @@
                 "description": "The name of the storage account where the web deploy package is located"
               }
             },
+            "keyVaultName": {
+              "type": "string",
+              "metadata": {
+                "description": "The name of the Key Vault containing SQL connection secrets"
+              }
+            },
             "logWorkspaceName": {
               "type": "string",
               "metadata": {
                 "description": "The name of the Log Analytics workspace to send logs to"
-              }
-            },
-            "sqlServerName": {
-              "type": "string",
-              "metadata": {
-                "description": "The SQL Server name used by the application"
-              }
-            },
-            "sqlDatabaseName": {
-              "type": "string",
-              "metadata": {
-                "description": "The SQL Database name used by the application"
               }
             }
           },
@@ -1328,6 +1290,7 @@
             "appServiceManagedIdentityName": "[format('id-{0}', variables('appName'))]",
             "appServicePrivateEndpointName": "[format('pep-{0}', variables('appName'))]",
             "appInsightsName": "[format('appinsights-{0}', variables('appName'))]",
+            "keyVaultUri": "[format('https://{0}{1}', parameters('keyVaultName'), environment().suffixes.keyvaultDns)]",
             "appServicePlanBasicSku": {
               "name": "B1",
               "capacity": 1
@@ -1386,6 +1349,7 @@
               "properties": {
                 "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
                 "virtualNetworkSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appServicesSubnetName'))]",
+                "keyVaultReferenceIdentity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName'))]",
                 "httpsOnly": true,
                 "hostNamesDisabled": false,
                 "publicNetworkAccess": "Disabled",
@@ -1394,7 +1358,7 @@
                   "http20Enabled": true,
                   "alwaysOn": true,
                   "linuxFxVersion": "PYTHON|3.12",
-                  "appCommandLine": "gunicorn --bind=0.0.0.0:8000 --timeout 120 app:app"
+                  "appCommandLine": "gunicorn --bind=0.0.0.0:8000 --timeout 120 --chdir /home/site/wwwroot app:app"
                 }
               },
               "dependsOn": [
@@ -1410,9 +1374,11 @@
               "properties": {
                 "SCM_DO_BUILD_DURING_DEPLOYMENT": "1",
                 "AZURE_CLIENT_ID": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName')), '2025-01-31-preview').clientId]",
-                "AZURE_SQL_SERVER": "[format('{0}{1}', parameters('sqlServerName'), environment().suffixes.sqlServerHostname)]",
-                "AZURE_SQL_DATABASE": "[parameters('sqlDatabaseName')]",
                 "AZURE_STORAGE_ACCOUNT": "[parameters('storageName')]",
+                "SQL_SERVER": "[format('@Microsoft.KeyVault(SecretUri={0}/secrets/sql-server/)', variables('keyVaultUri'))]",
+                "SQL_DATABASE": "[format('@Microsoft.KeyVault(SecretUri={0}/secrets/sql-database/)', variables('keyVaultUri'))]",
+                "SQL_USERNAME": "[format('@Microsoft.KeyVault(SecretUri={0}/secrets/sql-username/)', variables('keyVaultUri'))]",
+                "SQL_PASSWORD": "[format('@Microsoft.KeyVault(SecretUri={0}/secrets/sql-password/)', variables('keyVaultUri'))]",
                 "APPINSIGHTS_INSTRUMENTATIONKEY": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]",
                 "APPLICATIONINSIGHTS_CONNECTION_STRING": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]",
                 "ApplicationInsightsAgent_EXTENSION_VERSION": "~2"
@@ -1636,14 +1602,21 @@
                 "description": "The name of the web app."
               },
               "value": "[variables('appName')]"
+            },
+            "appServiceManagedIdentityPrincipalId": {
+              "type": "string",
+              "metadata": {
+                "description": "The principal ID of the web app managed identity."
+              },
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('appServiceManagedIdentityName')), '2025-01-31-preview').principalId]"
             }
           }
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'databaseDeploy')]",
         "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logWorkspaceName'))]",
         "[resourceId('Microsoft.Resources/deployments', 'networkDeploy')]",
+        "[resourceId('Microsoft.Resources/deployments', 'secretsDeploy')]",
         "[resourceId('Microsoft.Resources/deployments', 'storageDeploy')]"
       ]
     }

@@ -16,7 +16,7 @@ The following are prerequisites.
 1. Ensure you have the [Azure Developer CLI (`azd`) installed](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
 1. Ensure PowerShell 7+ (`pwsh`) is available for hook execution
 
-The deployment provisions a private Linux runner VM in the `snet-agents` subnet. During `azd up`, the post-provision hook now uses that runner for any step that requires private connectivity (SQL role assignment and app publishing), so you can deploy infrastructure and application code in one command.
+The deployment provisions a private Linux runner VM in the `snet-agents` subnet. During `azd up`, the post-provision hook uses that runner for steps that require private connectivity (app publishing and endpoint tests), so you can deploy infrastructure and application code in one command.
 
 ### Deploy with one command
 
@@ -40,10 +40,37 @@ The deployment provisions a private Linux runner VM in the `snet-agents` subnet.
    - `Location`: Azure region for deployment
    - `ResourceGroupName`: optional (leave empty for default)
    - `RunnerAdminUsername`: optional (defaults to `azureuser`)
+   - `SqlServer`: database host/FQDN used by the app
+   - `SqlDatabase`: database name
+   - `SqlUsername`: database username
+   - `SqlPassword`: database password (required)
+
+   Example:
+
+   ```json
+   {
+     "BaseName": "alfa-vmk",
+     "Location": "swedencentral",
+     "ResourceGroupName": "alfa-vmk-rg",
+     "SqlServer": "sql-server-jn.database.windows.net",
+     "SqlDatabase": "alfa-db",
+     "SqlUsername": "alfa_read_user"
+   }
+   ```
+
+   Security guidance:
+   - Prefer not storing `SqlPassword` in `deploy.config.json`.
+   - Set it in the `azd` environment instead:
+
+   ```bash
+   azd env set SQL_PASSWORD "<your-password>"
+   ```
+
+   During deployment, these values are stored as Key Vault secrets (`sql-server`, `sql-database`, `sql-username`, `sql-password`) and the web app reads them via Key Vault references using managed identity.
 
    Resolution behavior used by the preprovision hook:
    - If a key exists and is non-empty in `deploy.config.json`, that value is used.
-   - If the key is missing/empty in `deploy.config.json`, the hook falls back to defaults/prompts only.
+   - If the key is missing/empty in `deploy.config.json`, the hook falls back to existing `azd` environment values, then defaults/prompts.
    - Managed keys are overwritten in the `azd` environment each run.
    - Keys removed from `deploy.config.json` are overwritten only when a default/prompt value is available for that key.
    - `RUNNER_ADMIN_PASSWORD` is regenerated on each run.
@@ -54,12 +81,26 @@ The deployment provisions a private Linux runner VM in the `snet-agents` subnet.
    azd up
    ```
 
+### Avoid the initial azd resource group prompt
+
+`azd` may prompt for resource group selection before hooks run. To ensure the
+resource group from `deploy.config.json` is used automatically, initialize the
+azd environment first:
+
+```powershell
+./scripts/init-azd-env.ps1 -EnvironmentName alfa-app
+azd up --no-prompt
+```
+
+This stamps `AZURE_RESOURCE_GROUP` (plus other required variables) from
+`deploy.config.json` into the selected azd environment before deployment starts.
+
    This run performs all required steps:
    - Stamps `azd` environment values from `deploy.config.json`
    - Provisions Azure infrastructure
    - Assigns storage RBAC for the app managed identity
-   - Configures SQL database roles for the app managed identity
    - Publishes the contents of `app/` via the private runner VM
+   - Tests API endpoints through the private runner VM
 
 ### Retry guidance
 

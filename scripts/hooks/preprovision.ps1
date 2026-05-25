@@ -11,6 +11,33 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Invoke-Azd {
+  param(
+    [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments
+  )
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  $result = $null
+  $exitCode = 0
+
+  try {
+    # PowerShell 5.x surfaces native stderr as error records; azd update-check text can trip Stop.
+    $ErrorActionPreference = 'Continue'
+    $result = & azd @Arguments 2>$null
+    $exitCode = $LASTEXITCODE
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  if ($exitCode -ne 0) {
+    throw "azd $($Arguments -join ' ') failed with exit code $exitCode."
+  }
+
+  return $result
+}
+
 function New-RandomPassword {
   param([int]$Length = 24)
 
@@ -69,7 +96,17 @@ function Resolve-Var {
     if (-not [string]::IsNullOrWhiteSpace($Default)) {
       $value = $Default
       $source = 'default'
-    } elseif ([System.Environment]::UserInteractive) {
+    }
+
+    if (-not $value) {
+      $existingEnvValue = Invoke-Azd env get-value $EnvName
+      if (-not [string]::IsNullOrWhiteSpace($existingEnvValue)) {
+        $value = [string]$existingEnvValue
+        $source = 'existing azd env'
+      }
+    }
+
+    if (-not $value -and [System.Environment]::UserInteractive) {
       # 3. Interactive prompt (only when there is a TTY)
       $value = Read-Host $Prompt
       if (-not [string]::IsNullOrWhiteSpace($value)) {
@@ -93,6 +130,10 @@ $baseName            = Resolve-Var -EnvName 'BASE_NAME'               -ConfigFie
 $location            = Resolve-Var -EnvName 'AZURE_LOCATION'          -ConfigField 'Location'           -Prompt 'Enter Azure location'     -Required $true
 $resourceGroupName   = Resolve-Var -EnvName 'AZURE_RESOURCE_GROUP'    -ConfigField 'ResourceGroupName'  -Prompt 'Enter resource group name' -Default "rg-app-service-$location"
 $runnerAdminUsername = Resolve-Var -EnvName 'RUNNER_ADMIN_USERNAME'   -ConfigField 'RunnerAdminUsername' -Prompt 'Enter runner admin username' -Default 'azureuser'
+$sqlServer           = Resolve-Var -EnvName 'SQL_SERVER'              -ConfigField 'SqlServer'          -Prompt 'Enter SQL server host/FQDN' -Default 'sql-server-jn.database.windows.net'
+$sqlDatabase         = Resolve-Var -EnvName 'SQL_DATABASE'            -ConfigField 'SqlDatabase'        -Prompt 'Enter SQL database name' -Default 'alfa-db'
+$sqlUsername         = Resolve-Var -EnvName 'SQL_USERNAME'            -ConfigField 'SqlUsername'        -Prompt 'Enter SQL username' -Default 'alfa_read_user'
+$sqlPassword         = Resolve-Var -EnvName 'SQL_PASSWORD'            -ConfigField 'SqlPassword'        -Prompt 'Enter SQL password' -Required $true
 $runnerAdminPassword = New-RandomPassword
 
 # Resolve subscription ID from current az login session
@@ -115,29 +156,18 @@ Write-Host "==> Creating resource group: $resourceGroupName ($location)"
 az group create --name $resourceGroupName --location $location | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "az group create failed." }
 
-# ---- Resolve signed-in user for SQL Entra admin ---------------------------------
-$signedIn = az ad signed-in-user show -o json | ConvertFrom-Json
-if (-not $signedIn.id) {
-  throw 'Unable to resolve signed-in Entra user. Run az login and retry.'
-}
-
-$sqlEntraAdminLogin = $account.user.name
-if (-not $sqlEntraAdminLogin) { $sqlEntraAdminLogin = $signedIn.userPrincipalName }
-if (-not $sqlEntraAdminLogin) { $sqlEntraAdminLogin = $signedIn.mail }
-if (-not $sqlEntraAdminLogin) {
-  throw 'Unable to determine SQL Entra admin login from the signed-in user. Run az login and retry.'
-}
-
 # ---- Stamp azd env vars ---------------------------------------------------------
 Write-Host "==> Stamping azd env vars for environment: $environmentName"
-azd env set AZURE_SUBSCRIPTION_ID   $subscriptionId    | Out-Null
-azd env set AZURE_LOCATION          $location          | Out-Null
-azd env set AZURE_RESOURCE_GROUP    $resourceGroupName | Out-Null
-azd env set BASE_NAME               $baseName          | Out-Null
-azd env set SQL_ENTRA_ADMIN_LOGIN   $sqlEntraAdminLogin    | Out-Null
-azd env set SQL_ENTRA_ADMIN_OBJECT_ID $signedIn.id     | Out-Null
-azd env set RUNNER_ADMIN_USERNAME   $runnerAdminUsername | Out-Null
-azd env set RUNNER_ADMIN_PASSWORD   $runnerAdminPassword | Out-Null
+Invoke-Azd env set AZURE_SUBSCRIPTION_ID   $subscriptionId    | Out-Null
+Invoke-Azd env set AZURE_LOCATION          $location          | Out-Null
+Invoke-Azd env set AZURE_RESOURCE_GROUP    $resourceGroupName | Out-Null
+Invoke-Azd env set BASE_NAME               $baseName          | Out-Null
+Invoke-Azd env set RUNNER_ADMIN_USERNAME   $runnerAdminUsername | Out-Null
+Invoke-Azd env set RUNNER_ADMIN_PASSWORD   $runnerAdminPassword | Out-Null
+Invoke-Azd env set SQL_SERVER              $sqlServer         | Out-Null
+Invoke-Azd env set SQL_DATABASE            $sqlDatabase       | Out-Null
+Invoke-Azd env set SQL_USERNAME            $sqlUsername       | Out-Null
+Invoke-Azd env set SQL_PASSWORD            $sqlPassword       | Out-Null
 
 Write-Host ""
 Write-Host "preprovision complete."
@@ -146,5 +176,7 @@ Write-Host "  Subscription : $subscriptionId"
 Write-Host "  Location     : $location"
 Write-Host "  Resource Group: $resourceGroupName"
 Write-Host "  BaseName     : $baseName"
-Write-Host "  SQL Admin    : $sqlEntraAdminLogin"
 Write-Host "  Runner Admin : $runnerAdminUsername"
+Write-Host "  SQL Server   : $sqlServer"
+Write-Host "  SQL Database : $sqlDatabase"
+Write-Host "  SQL Username : $sqlUsername"

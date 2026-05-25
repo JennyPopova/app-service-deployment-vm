@@ -94,6 +94,7 @@ export STORAGE_ACCOUNT='__STORAGE_ACCOUNT__'
 
 az login --identity --allow-no-subscriptions >/dev/null
 
+set +e
 python3 - <<'PY'
 import urllib.request
 import json
@@ -257,6 +258,10 @@ else:
             print("  - {}".format(err))
     sys.exit(1)
 PY
+test_exit_code=$?
+set -e
+echo "__TEST_EXIT_CODE__=$test_exit_code"
+exit $test_exit_code
 '@
 
 $testScript = $testScriptTemplate.
@@ -283,6 +288,16 @@ try {
   if ($result.value -and @($result.value).Count -gt 0) {
     $stdout = $result.value[0].message
     Write-Host $stdout
+
+    $exitCodeMatch = [regex]::Match($stdout, '__TEST_EXIT_CODE__=(\d+)')
+    if ($exitCodeMatch.Success) {
+      $remoteExitCode = [int]$exitCodeMatch.Groups[1].Value
+      if ($remoteExitCode -ne 0) {
+        throw "API tests failed on runner VM with exit code $remoteExitCode."
+      }
+    } else {
+      throw "Could not determine runner test exit code from output."
+    }
   }
 
   if ($LASTEXITCODE -ne 0) {

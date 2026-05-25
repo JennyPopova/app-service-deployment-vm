@@ -14,6 +14,19 @@ param vnetName string
 @description('The name of the subnet to deploy the private endpoint into')
 param privateEndpointsSubnetName string
 
+@description('Database server hostname or FQDN to store as a Key Vault secret.')
+param sqlServer string
+
+@description('Database name to store as a Key Vault secret.')
+param sqlDatabase string
+
+@description('Database username to store as a Key Vault secret.')
+param sqlUsername string
+
+@description('Database password to store as a Key Vault secret.')
+@secure()
+param sqlPassword string
+
 //variables
 var keyVaultName = 'kv-${baseName}'
 var keyVaultPrivateEndpointName = 'pep-${keyVaultName}'
@@ -106,6 +119,38 @@ resource keyVaultDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZone
   dependsOn: [
     keyVaultPrivateEndpoint
   ]
+}
+
+resource sqlServerSecret 'Microsoft.KeyVault/vaults/secrets@2025-05-01' = {
+  parent: keyVault
+  name: 'sql-server'
+  properties: {
+    value: sqlServer
+  }
+}
+
+resource sqlDatabaseSecret 'Microsoft.KeyVault/vaults/secrets@2025-05-01' = {
+  parent: keyVault
+  name: 'sql-database'
+  properties: {
+    value: sqlDatabase
+  }
+}
+
+resource sqlUsernameSecret 'Microsoft.KeyVault/vaults/secrets@2025-05-01' = {
+  parent: keyVault
+  name: 'sql-username'
+  properties: {
+    value: sqlUsername
+  }
+}
+
+resource sqlPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2025-05-01' = {
+  parent: keyVault
+  name: 'sql-password'
+  properties: {
+    value: sqlPassword
+  }
 }
 
 @description('The name of the key vault account.')

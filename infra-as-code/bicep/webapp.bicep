@@ -24,14 +24,11 @@ param privateEndpointsSubnetName string
 @description('The name of the storage account where the web deploy package is located')
 param storageName string
 
+@description('The name of the Key Vault containing SQL connection secrets')
+param keyVaultName string
+
 @description('The name of the Log Analytics workspace to send logs to')
 param logWorkspaceName string
-
-@description('The SQL Server name used by the application')
-param sqlServerName string
-
-@description('The SQL Database name used by the application')
-param sqlDatabaseName string
 
 // variables
 var appName = 'app-${baseName}'
@@ -39,6 +36,7 @@ var appServicePlanName = 'asp-${appName}${uniqueString(subscription().subscripti
 var appServiceManagedIdentityName = 'id-${appName}'
 var appServicePrivateEndpointName = 'pep-${appName}'
 var appInsightsName= 'appinsights-${appName}'
+var keyVaultUri = 'https://${keyVaultName}${environment().suffixes.keyvaultDns}'
 
 var appServicePlanBasicSku = {
   name: 'B1'
@@ -122,6 +120,7 @@ resource webApp 'Microsoft.Web/sites@2024-11-01' = {
   properties: {
     serverFarmId: appServicePlan.id
     virtualNetworkSubnetId: vnet::appServicesSubnet.id
+    keyVaultReferenceIdentity: appServiceManagedIdentity.id
     httpsOnly: true
     hostNamesDisabled: false
     publicNetworkAccess: 'Disabled'
@@ -130,7 +129,7 @@ resource webApp 'Microsoft.Web/sites@2024-11-01' = {
       http20Enabled: true
       alwaysOn: true
       linuxFxVersion: 'PYTHON|3.12'
-      appCommandLine: 'gunicorn --bind=0.0.0.0:8000 --timeout 120 app:app'
+      appCommandLine: 'gunicorn --bind=0.0.0.0:8000 --timeout 120 --chdir /home/site/wwwroot app:app'
     }
   }
   dependsOn: [
@@ -145,9 +144,11 @@ resource appsettings 'Microsoft.Web/sites/config@2024-11-01' = {
   properties: {
     SCM_DO_BUILD_DURING_DEPLOYMENT: '1'
     AZURE_CLIENT_ID: appServiceManagedIdentity.properties.clientId
-    AZURE_SQL_SERVER: '${sqlServerName}${environment().suffixes.sqlServerHostname}'
-    AZURE_SQL_DATABASE: sqlDatabaseName
     AZURE_STORAGE_ACCOUNT: storageName
+    SQL_SERVER: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}/secrets/sql-server/)'
+    SQL_DATABASE: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}/secrets/sql-database/)'
+    SQL_USERNAME: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}/secrets/sql-username/)'
+    SQL_PASSWORD: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}/secrets/sql-password/)'
     APPINSIGHTS_INSTRUMENTATIONKEY: appInsights.properties.InstrumentationKey
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
     ApplicationInsightsAgent_EXTENSION_VERSION: '~2'
@@ -332,3 +333,6 @@ output appServicePlanName string = appServicePlan.name
 
 @description('The name of the web app.')
 output appName string = webApp.name
+
+@description('The principal ID of the web app managed identity.')
+output appServiceManagedIdentityPrincipalId string = appServiceManagedIdentity.properties.principalId

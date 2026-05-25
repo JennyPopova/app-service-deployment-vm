@@ -1,20 +1,22 @@
 """
 db_to_parquet.py
 
-Reads 20 rows from SalesLT.Product (Azure SQL, Entra-only auth),
+Reads 20 rows from SalesLT.Product,
 converts them to a Parquet file, and uploads to the 'sample_data'
 container in Azure Blob Storage using managed identity / DefaultAzureCredential.
 
 Environment variables (set as App Service app settings or locally):
-  AZURE_SQL_SERVER    - e.g. sql-alfbx.database.windows.net
-  AZURE_SQL_DATABASE  - e.g. sqldb-adventureworks
+    SQL_SERVER          - e.g. sql-server-jn.database.windows.net
+    SQL_DATABASE        - e.g. alfa-db
+    SQL_USERNAME        - e.g. alfa_read_user
+    SQL_PASSWORD        - SQL user password
   AZURE_STORAGE_ACCOUNT - e.g. stappalfbx
   AZURE_CLIENT_ID     - client ID of the user-assigned managed identity (optional locally)
 """
 
 import io
+import json
 import os
-import struct
 import datetime
 import time
 import pyodbc
@@ -25,37 +27,43 @@ from azure.storage.blob import BlobServiceClient
 # ---------------------------------------------------------------------------
 # Configuration (from environment variables)
 # ---------------------------------------------------------------------------
-SQL_SERVER        = os.environ.get("AZURE_SQL_SERVER", "sql-alfbx.database.windows.net")
-SQL_DATABASE      = os.environ.get("AZURE_SQL_DATABASE", "sqldb-adventureworks")
+SQL_SERVER        = os.environ.get("SQL_SERVER", "sql-server-jn.database.windows.net")
+SQL_DATABASE      = os.environ.get("SQL_DATABASE", "alfa-db")
+SQL_USERNAME      = os.environ.get("SQL_USERNAME", "alfa_read_user")
+SQL_PASSWORD      = os.environ.get("SQL_PASSWORD")
+
 STORAGE_ACCOUNT   = os.environ.get("AZURE_STORAGE_ACCOUNT", "stappalfbx")
-CONTAINER_NAME    = "output"
+OUTPUT_CONTAINER_NAME    = "output"
 BLOB_NAME_PREFIX  = "sample-data"
-SQL_QUERY         = "SELECT TOP 20 * FROM SalesLT.Product"
+
+CONFIG_CONTAINER_NAME = "app-config"
+CONFIG_BLOB_NAME  = os.environ.get("APP_CONFIG_BLOB_NAME", "query-config.json")
+SQL_QUERY_CONFIG_KEY = os.environ.get("SQL_QUERY_CONFIG_KEY", "sql_query")
+DEFAULT_SQL_QUERY = "SELECT TOP 20 * FROM SalesLT.Product"
 
 # ---------------------------------------------------------------------------
-# Helper: acquire a pyodbc connection using an Azure AD access token
+# Helper: acquire a pyodbc connection using SQL username/password
 # ---------------------------------------------------------------------------
-def get_sql_connection(credential: DefaultAzureCredential) -> pyodbc.Connection:
-    """Open a pyodbc connection authenticated via Azure AD token."""
-    # Acquire token for Azure SQL
-    token_obj = credential.get_token("https://database.windows.net/.default")
-    raw_token = token_obj.token.encode("utf-16-le")
-    token_struct = struct.pack(f"<I{len(raw_token)}s", len(raw_token), raw_token)
+def get_sql_connection() -> pyodbc.Connection:
+    """Open a pyodbc connection authenticated via SQL username/password."""
+    if not SQL_PASSWORD:
+        raise ValueError("Set SQL_PASSWORD environment variable before running this pipeline.")
 
     conn_str = (
         "Driver={ODBC Driver 18 for SQL Server};"
         f"Server=tcp:{SQL_SERVER},1433;"
         f"Database={SQL_DATABASE};"
+        f"UID={SQL_USERNAME};"
+        f"PWD={SQL_PASSWORD};"
         "Encrypt=yes;"
         "TrustServerCertificate=no;"
         "Connection Timeout=30;"
     )
-    sql_copt_ss_access_token = 1256  # pyodbc constant for SQL_COPT_SS_ACCESS_TOKEN
 
     last_error = None
     for attempt in range(1, 6):
         try:
-            return pyodbc.connect(conn_str, attrs_before={sql_copt_ss_access_token: token_struct})
+            return pyodbc.connect(conn_str)
         except pyodbc.Error as exc:
             last_error = exc
             error_text = str(exc)
@@ -72,13 +80,52 @@ def get_sql_connection(credential: DefaultAzureCredential) -> pyodbc.Connection:
 # ---------------------------------------------------------------------------
 # Helper: fetch rows into a DataFrame
 # ---------------------------------------------------------------------------
-def fetch_data(conn: pyodbc.Connection) -> pd.DataFrame:
+def fetch_data(conn: pyodbc.Connection, sql_query: str) -> pd.DataFrame:
     cursor = conn.cursor()
-    cursor.execute(SQL_QUERY)
+    cursor.execute(sql_query)
     columns = [col[0] for col in cursor.description]
     rows = cursor.fetchall()
     cursor.close()
     return pd.DataFrame.from_records(rows, columns=columns)
+
+
+def load_sql_query_from_config(credential: DefaultAzureCredential) -> str:
+    """Load SQL query from JSON config in Blob Storage, fallback to default query."""
+    account_url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
+    blob_service = BlobServiceClient(account_url=account_url, credential=credential)
+
+    try:
+        container_client = blob_service.get_container_client(CONFIG_CONTAINER_NAME)
+        if not container_client.exists():
+            print(
+                f"Config container '{CONFIG_CONTAINER_NAME}' not found. "
+                f"Using default query."
+            )
+            return DEFAULT_SQL_QUERY
+
+        blob_client = container_client.get_blob_client(CONFIG_BLOB_NAME)
+        if not blob_client.exists():
+            print(
+                f"Config blob '{CONFIG_BLOB_NAME}' not found in '{CONFIG_CONTAINER_NAME}'. "
+                f"Using default query."
+            )
+            return DEFAULT_SQL_QUERY
+
+        raw_bytes = blob_client.download_blob().readall()
+        config = json.loads(raw_bytes.decode("utf-8"))
+
+        configured_query = config.get(SQL_QUERY_CONFIG_KEY)
+        if isinstance(configured_query, str) and configured_query.strip():
+            return configured_query.strip()
+
+        print(
+            f"Config key '{SQL_QUERY_CONFIG_KEY}' is missing/empty in '{CONFIG_BLOB_NAME}'. "
+            f"Using default query."
+        )
+        return DEFAULT_SQL_QUERY
+    except Exception as exc:
+        print(f"Failed to load query config from Blob Storage ({exc}). Using default query.")
+        return DEFAULT_SQL_QUERY
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +144,10 @@ def upload_to_blob(credential: DefaultAzureCredential, data: bytes, blob_name: s
     account_url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
     blob_service = BlobServiceClient(account_url=account_url, credential=credential)
 
-    container_client = blob_service.get_container_client(CONTAINER_NAME)
+    container_client = blob_service.get_container_client(OUTPUT_CONTAINER_NAME)
     if not container_client.exists():
         container_client.create_container()
-        print(f"Created container '{CONTAINER_NAME}'.")
+        print(f"Created container '{OUTPUT_CONTAINER_NAME}'.")
 
     blob_client = container_client.get_blob_client(blob_name)
     blob_client.upload_blob(data, overwrite=True)
@@ -124,10 +171,12 @@ def main():
         print(f"Authenticating with DefaultAzureCredential...")
         credential = DefaultAzureCredential()
 
+    sql_query = load_sql_query_from_config(credential)
+
     print(f"Connecting to {SQL_SERVER} / {SQL_DATABASE}...")
-    with get_sql_connection(credential) as conn:
-        print(f"Running: {SQL_QUERY}")
-        df = fetch_data(conn)
+    with get_sql_connection() as conn:
+        print(f"Running: {sql_query}")
+        df = fetch_data(conn, sql_query)
 
     print(f"Fetched {len(df)} rows. Columns: {list(df.columns)}")
     print(df.head())
@@ -136,7 +185,7 @@ def main():
     parquet_bytes = to_parquet_bytes(df)
     print(f"Parquet size: {len(parquet_bytes)} bytes")
 
-    print(f"Uploading to blob storage account '{STORAGE_ACCOUNT}', container '{CONTAINER_NAME}', blob '{blob_name}'...")
+    print(f"Uploading to blob storage account '{STORAGE_ACCOUNT}', container '{OUTPUT_CONTAINER_NAME}', blob '{blob_name}'...")
     url = upload_to_blob(credential, parquet_bytes, blob_name)
     print(f"Upload complete. Blob URL: {url}")
 
