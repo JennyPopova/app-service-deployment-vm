@@ -5,3 +5,4 @@ pandas==2.2.3
 pyarrow==19.0.1
 flask==3.1.1
 gunicorn==23.0.0
+azure-monitor-opentelemetry==1.6.1

@@ -148,6 +148,18 @@ if (-not $environmentName) {
 
 Write-Host "==> Resolution precedence: deploy.config.json -> default -> prompt"
 
+# ---- Pre-deployment Python validation ------------------------------------------
+$predeployChecksScriptPath = Join-Path $PSScriptRoot '..\run-python-predeploy-checks.ps1'
+if (-not (Test-Path $predeployChecksScriptPath)) {
+  throw "Pre-deploy Python checks script not found at '$predeployChecksScriptPath'."
+}
+
+Write-Host "==> Running pre-deployment Python checks"
+& $predeployChecksScriptPath -AppDirectory (Join-Path $PSScriptRoot '..\..\app')
+if ($LASTEXITCODE -ne 0) {
+  throw "Pre-deployment Python checks failed with exit code $LASTEXITCODE."
+}
+
 # ---- Azure login check ----------------------------------------------------------
 Write-Host "==> Using subscription: $subscriptionId ($($account.name))"
 

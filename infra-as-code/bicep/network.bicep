@@ -216,6 +216,20 @@ resource appServiceSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01
           direction: 'Outbound'
         }
       }
+      {
+        name: 'AppPlan.Out.Allow.ExternalDatabase.RedirectPorts'
+        properties: {
+          description: 'Allow Azure SQL redirect data ports from the app service subnet to an external database endpoint.'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '11000-11999'
+          sourceAddressPrefix: appServicesSubnetPrefix
+          destinationAddressPrefix: externalDatabaseDestinationPrefix
+          access: 'Allow'
+          priority: 121
+          direction: 'Outbound'
+        }
+      }
     ]
   }
 }
@@ -289,6 +303,34 @@ resource agentsSubnetNsg 'Microsoft.Network/networkSecurityGroups@2024-10-01' = 
           destinationAddressPrefix: 'Internet'
           access: 'Allow'
           priority: 120
+          direction: 'Outbound'
+        }
+      }
+      {
+        name: 'Agents.Out.Allow.ExternalDatabase'
+        properties: {
+          description: 'Allow outbound SQL traffic from the runner subnet to an external database endpoint.'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: string(externalDatabasePort)
+          sourceAddressPrefix: agentsSubnetPrefix
+          destinationAddressPrefix: externalDatabaseDestinationPrefix
+          access: 'Allow'
+          priority: 130
+          direction: 'Outbound'
+        }
+      }
+      {
+        name: 'Agents.Out.Allow.ExternalDatabase.RedirectPorts'
+        properties: {
+          description: 'Allow Azure SQL redirect data ports from the runner subnet to an external database endpoint.'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '11000-11999'
+          sourceAddressPrefix: agentsSubnetPrefix
+          destinationAddressPrefix: externalDatabaseDestinationPrefix
+          access: 'Allow'
+          priority: 131
           direction: 'Outbound'
         }
       }

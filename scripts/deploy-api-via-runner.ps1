@@ -8,6 +8,8 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$WebAppName,
 
+  [string]$SubscriptionId = (az account show --query id -o tsv),
+
   [string]$AppDirectory = (Join-Path $PSScriptRoot '..\app')
 )
 
@@ -50,6 +52,10 @@ if (-not $webAppResourceId) {
   throw "Unable to resolve the resource ID for web app '$WebAppName'."
 }
 
+if ([string]::IsNullOrWhiteSpace($SubscriptionId)) {
+  throw "Unable to resolve Azure subscription ID for runner deployment."
+}
+
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -79,6 +85,7 @@ finally {
 }
 
 $webAppResourceIdBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($webAppResourceId))
+$subscriptionIdBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($SubscriptionId))
 
 $runnerScriptTemplate = @'
 set -eu
@@ -86,6 +93,7 @@ workdir=$(mktemp -d)
 export WORKDIR="$workdir"
 export APP_ZIP_B64='__APP_ZIP_B64__'
 export WEB_APP_RESOURCE_ID_B64='__WEB_APP_RESOURCE_ID_B64__'
+export SUBSCRIPTION_ID_B64='__SUBSCRIPTION_ID_B64__'
 python3 - <<'PY'
 import base64
 import os
@@ -101,17 +109,43 @@ import os
 print(base64.b64decode(os.environ['WEB_APP_RESOURCE_ID_B64']).decode('utf-8'), end='')
 PY
 )
+subscription_id=$(python3 - <<'PY'
+import base64
+import os
+print(base64.b64decode(os.environ['SUBSCRIPTION_ID_B64']).decode('utf-8'), end='')
+PY
+)
 if ! command -v az >/dev/null 2>&1; then
   curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 fi
-az login --identity --allow-no-subscriptions >/dev/null
-az webapp deploy --ids "$web_app_resource_id" --src-path "$workdir/app.zip" --type zip --async true --track-status false >/dev/null
+deploy_ok=0
+for attempt in 1 2 3 4 5 6; do
+  az login --identity --allow-no-subscriptions >/dev/null
+
+  if az account set --subscription "$subscription_id" >/dev/null 2>&1; then
+    if az webapp deploy --ids "$web_app_resource_id" --src-path "$workdir/app.zip" --type zip --track-status true; then
+      deploy_ok=1
+      break
+    fi
+  fi
+
+  echo "Retrying runner deploy (attempt ${attempt}/6) after subscription context propagation delay..."
+  sleep $((attempt * 15))
+done
+
+if [ "$deploy_ok" -ne 1 ]; then
+  echo "Runner deployment failed after retries."
+  rm -rf "$workdir"
+  exit 1
+fi
+
 rm -rf "$workdir"
 '@
 
 $runnerScript = $runnerScriptTemplate.
   Replace('__APP_ZIP_B64__', $appZipBase64).
-  Replace('__WEB_APP_RESOURCE_ID_B64__', $webAppResourceIdBase64)
+  Replace('__WEB_APP_RESOURCE_ID_B64__', $webAppResourceIdBase64).
+  Replace('__SUBSCRIPTION_ID_B64__', $subscriptionIdBase64)
 
 $tempScriptPath = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), '.sh')
 

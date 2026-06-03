@@ -42,10 +42,15 @@ function Get-RequiredEnvironmentValue {
 # ---- Read env vars stamped by preprovision and azd provision outputs ------------
 $resourceGroup      = Get-RequiredEnvironmentValue -Name 'AZURE_RESOURCE_GROUP'
 $baseName           = Get-RequiredEnvironmentValue -Name 'BASE_NAME'
+$sqlServer          = Get-RequiredEnvironmentValue -Name 'SQL_SERVER'
 
 $storageAccountName = "stapp$($baseName.Replace('-', ''))"
 $appIdentityName   = "id-app-$baseName"
 $runnerVmName      = "vm-runner-$baseName"
+$webAppName        = "app-$baseName"
+$collectLogsScriptPath = Join-Path $PSScriptRoot '..\collect-app-logs-via-runner.ps1'
+$hasFailure = $false
+$failureReason = ''
 # ---- Step 1: Storage RBAC — Storage Blob Data Contributor ----------------------
 Write-Host ""
 Write-Host "==> Assigning Storage Blob Data Contributor to app managed identity"
@@ -127,60 +132,110 @@ else {
 }
 
 # ---- Summary -------------------------------------------------------------------
-Write-Host ""
-Write-Host "==> Publishing app code through private runner"
-$deployScriptPath = Join-Path $PSScriptRoot '..\deploy-api-via-runner.ps1'
-if (-not (Test-Path $deployScriptPath)) {
-  throw "Runner deploy script not found at '$deployScriptPath'."
+try {
+  Write-Host ""
+  Write-Host "==> Publishing app code through private runner"
+  $deployScriptPath = Join-Path $PSScriptRoot '..\deploy-api-via-runner.ps1'
+  if (-not (Test-Path $deployScriptPath)) {
+    throw "Runner deploy script not found at '$deployScriptPath'."
+  }
+
+  & $deployScriptPath `
+    -ResourceGroup $resourceGroup `
+    -RunnerVmName $runnerVmName `
+    -WebAppName $webAppName
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "Runner-based app publish failed for web app '$webAppName'."
+  }
+
+  Write-Host "App publish complete for $webAppName"
+
+  # ---- Upload app config JSON through private runner ---------------------------
+  Write-Host ""
+  Write-Host "==> Uploading app config JSON through private runner"
+  $uploadConfigScriptPath = Join-Path $PSScriptRoot '..\upload-app-config-via-runner.ps1'
+  if (-not (Test-Path $uploadConfigScriptPath)) {
+    throw "Runner config upload script not found at '$uploadConfigScriptPath'."
+  }
+
+  & $uploadConfigScriptPath `
+    -ResourceGroup $resourceGroup `
+    -RunnerVmName $runnerVmName `
+    -StorageAccountName $storageAccountName
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "Runner-based config upload failed for storage account '$storageAccountName'."
+  }
+
+  Write-Host "App config upload complete for storage account $storageAccountName"
+
+  # ---- Validate network setup for public SQL access ---------------------------
+  Write-Host ""
+  Write-Host "==> Validating network setup"
+  $networkCheckScriptPath = Join-Path $PSScriptRoot '..\check-network-setup.ps1'
+  if (-not (Test-Path $networkCheckScriptPath)) {
+    throw "Network check script not found at '$networkCheckScriptPath'."
+  }
+
+  & $networkCheckScriptPath `
+    -ResourceGroup $resourceGroup `
+    -WebAppName $webAppName `
+    -RunnerVmName $runnerVmName `
+    -SqlServerHost $sqlServer
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "Network setup validation failed for web app '$webAppName'."
+  }
+
+  Write-Host ""
+  Write-Host "==> Waiting 60 seconds before API tests to allow app provisioning to settle"
+  Start-Sleep -Seconds 60
+
+  # ---- Test API endpoints through private runner -------------------------------
+  Write-Host ""
+  Write-Host "==> Testing API endpoints from runner"
+  $testScriptPath = Join-Path $PSScriptRoot '..\test-api-via-runner.ps1'
+  if (-not (Test-Path $testScriptPath)) {
+    throw "API test script not found at '$testScriptPath'."
+  }
+
+  & $testScriptPath `
+    -ResourceGroup $resourceGroup `
+    -RunnerVmName $runnerVmName `
+    -WebAppName $webAppName
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "API tests failed with exit code $LASTEXITCODE."
+  }
+
+  Write-Host ""
+  Write-Host "postprovision complete."
+  az webapp show --resource-group $resourceGroup --name $webAppName --query '{appName:name, defaultHostName:defaultHostName, hostNames:hostNames, state:state}' -o table
 }
-
-& $deployScriptPath `
-  -ResourceGroup $resourceGroup `
-  -RunnerVmName $runnerVmName `
-  -WebAppName "app-$baseName"
-
-if ($LASTEXITCODE -ne 0) {
-  throw "Runner-based app publish failed for web app 'app-$baseName'."
+catch {
+  $hasFailure = $true
+  $failureReason = $_.Exception.Message
+  throw
 }
+finally {
+  if (-not (Test-Path $collectLogsScriptPath)) {
+    Write-Warning "Log collection script not found at '$collectLogsScriptPath'. Skipping diagnostics download."
+  }
+  else {
+    Write-Host ""
+    Write-Host "==> Downloading deployment diagnostics"
 
-Write-Host "App publish complete for app-$baseName"
-
-# ---- Upload app config JSON through private runner -----------------------------
-Write-Host ""
-Write-Host "==> Uploading app config JSON through private runner"
-$uploadConfigScriptPath = Join-Path $PSScriptRoot '..\upload-app-config-via-runner.ps1'
-if (-not (Test-Path $uploadConfigScriptPath)) {
-  throw "Runner config upload script not found at '$uploadConfigScriptPath'."
+    try {
+      & $collectLogsScriptPath `
+        -ResourceGroup $resourceGroup `
+        -RunnerVmName $runnerVmName `
+        -WebAppName $webAppName `
+        -FailureMode:$hasFailure `
+        -FailureReason $failureReason
+    }
+    catch {
+      Write-Warning "Diagnostics download failed: $($_.Exception.Message)"
+    }
+  }
 }
-
-& $uploadConfigScriptPath `
-  -ResourceGroup $resourceGroup `
-  -RunnerVmName $runnerVmName `
-  -StorageAccountName $storageAccountName
-
-if ($LASTEXITCODE -ne 0) {
-  throw "Runner-based config upload failed for storage account '$storageAccountName'."
-}
-
-Write-Host "App config upload complete for storage account $storageAccountName"
-
-# ---- Test API endpoints through private runner ---------------------------------
-Write-Host ""
-Write-Host "==> Testing API endpoints from runner"
-$testScriptPath = Join-Path $PSScriptRoot '..\test-api-via-runner.ps1'
-if (-not (Test-Path $testScriptPath)) {
-  throw "API test script not found at '$testScriptPath'."
-}
-
-& $testScriptPath `
-  -ResourceGroup $resourceGroup `
-  -RunnerVmName $runnerVmName `
-  -WebAppName "app-$baseName"
-
-if ($LASTEXITCODE -ne 0) {
-  Write-Warning "API tests completed with warnings. Check output above for details."
-}
-
-Write-Host ""
-Write-Host "postprovision complete."
-az webapp show --resource-group $resourceGroup --name ("app-" + $baseName) --query '{appName:name, defaultHostName:defaultHostName, hostNames:hostNames, state:state}' -o table

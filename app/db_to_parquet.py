@@ -38,10 +38,14 @@ BLOB_NAME_PREFIX  = "sample-data"
 
 CONFIG_CONTAINER_NAME = "app-config"
 CONFIG_BLOB_NAME  = os.environ.get("APP_CONFIG_BLOB_NAME", "query-config.json")
-SQL_QUERY_CONFIG_KEY = os.environ.get("SQL_QUERY_CONFIG_KEY", "sql_query")
-DEFAULT_SQL_QUERY = "SELECT TOP 20 * FROM SalesLT.Product"
 
-# ---------------------------------------------------------------------------
+DEFAULT_LAST_DATE = "2008-02-20"
+DEFAULT_SQL_QUERY = "SELECT TOP 20 * FROM SalesLT.Product where ModifiedDate > '{}'"
+# Backward-compatible alias for existing references.
+
+#DEFAULT_SQL_QUERY = "SELECT TOP 20 * FROM dbo.DataMiningMES"
+
+# --------------------------------------------------------------------------In -
 # Helper: acquire a pyodbc connection using SQL username/password
 # ---------------------------------------------------------------------------
 def get_sql_connection() -> pyodbc.Connection:
@@ -89,8 +93,8 @@ def fetch_data(conn: pyodbc.Connection, sql_query: str) -> pd.DataFrame:
     return pd.DataFrame.from_records(rows, columns=columns)
 
 
-def load_sql_query_from_config(credential: DefaultAzureCredential) -> str:
-    """Load SQL query from JSON config in Blob Storage, fallback to default query."""
+def load_last_date_from_config(credential: DefaultAzureCredential) -> str:
+    """Load last_date from JSON config in Blob Storage, fallback to default value."""
     account_url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
     blob_service = BlobServiceClient(account_url=account_url, credential=credential)
 
@@ -99,33 +103,33 @@ def load_sql_query_from_config(credential: DefaultAzureCredential) -> str:
         if not container_client.exists():
             print(
                 f"Config container '{CONFIG_CONTAINER_NAME}' not found. "
-                f"Using default query."
+                f"Using default last_date."
             )
-            return DEFAULT_SQL_QUERY
+            return DEFAULT_LAST_DATE
 
         blob_client = container_client.get_blob_client(CONFIG_BLOB_NAME)
         if not blob_client.exists():
             print(
                 f"Config blob '{CONFIG_BLOB_NAME}' not found in '{CONFIG_CONTAINER_NAME}'. "
-                f"Using default query."
+                f"Using default last_date."
             )
-            return DEFAULT_SQL_QUERY
+            return DEFAULT_LAST_DATE
 
         raw_bytes = blob_client.download_blob().readall()
         config = json.loads(raw_bytes.decode("utf-8"))
 
-        configured_query = config.get(SQL_QUERY_CONFIG_KEY)
-        if isinstance(configured_query, str) and configured_query.strip():
-            return configured_query.strip()
+        configured_last_date = config.get("last_date")
+        if isinstance(configured_last_date, str) and configured_last_date.strip():
+            return configured_last_date.strip()
 
         print(
-            f"Config key '{SQL_QUERY_CONFIG_KEY}' is missing/empty in '{CONFIG_BLOB_NAME}'. "
-            f"Using default query."
+            f"Config key 'last_date' is missing/empty in '{CONFIG_BLOB_NAME}'. "
+            f"Using default last_date."
         )
-        return DEFAULT_SQL_QUERY
+        return DEFAULT_LAST_DATE
     except Exception as exc:
-        print(f"Failed to load query config from Blob Storage ({exc}). Using default query.")
-        return DEFAULT_SQL_QUERY
+        print(f"Failed to load query config from Blob Storage ({exc}). Using default last_date.")
+        return DEFAULT_LAST_DATE
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +175,8 @@ def main():
         print(f"Authenticating with DefaultAzureCredential...")
         credential = DefaultAzureCredential()
 
-    sql_query = load_sql_query_from_config(credential)
+    last_date = load_last_date_from_config(credential)
+    sql_query = DEFAULT_SQL_QUERY.format(last_date)
 
     print(f"Connecting to {SQL_SERVER} / {SQL_DATABASE}...")
     with get_sql_connection() as conn:

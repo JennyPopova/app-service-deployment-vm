@@ -98,9 +98,6 @@ resource runnerVm 'Microsoft.Compute/virtualMachines@2024-11-01' = {
       }
       osDisk: {
         createOption: 'FromImage'
-        managedDisk: {
-          storageAccountType: 'StandardSSD_LRS'
-        }
       }
     }
     networkProfile: {

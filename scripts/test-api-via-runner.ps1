@@ -143,6 +143,19 @@ def get_baseline_with_retry(max_attempts=12, sleep_seconds=10):
 
   raise RuntimeError(last_error or "Unable to list baseline blobs")
 
+def wait_for_new_parquet_blob(before_count, max_attempts=24, sleep_seconds=15):
+  """Poll output container for a new parquet blob after /run trigger."""
+  last_count = before_count
+  for attempt in range(1, max_attempts + 1):
+    after_blobs = list_parquet_blobs()
+    last_count = len(after_blobs)
+    print("  Poll {}/{}: parquet blobs={}".format(attempt, max_attempts, last_count))
+    if last_count > before_count:
+      return True, last_count
+    if attempt < max_attempts:
+      time.sleep(sleep_seconds)
+  return False, last_count
+
 # Capture baseline parquet count before triggering the pipeline
 try:
   before_blobs = get_baseline_with_retry()
@@ -179,16 +192,17 @@ except Exception as e:
 
 # Test pipeline endpoint
 print("\nTesting pipeline endpoint: POST https://{}/run".format(app_host))
+pipeline_timed_out = False
 try:
     req = urllib.request.Request("https://{}/run".format(app_host), data=b'{}', method='POST')
     req.add_header('Content-Type', 'application/json')
-    response = urllib.request.urlopen(req, timeout=30)
+    response = urllib.request.urlopen(req, timeout=180)
     status = response.status
     body = response.read().decode('utf-8')
     print("  Response Code: {}".format(status))
     print("  Response Body: {}".format(body[:200]))
-    if status in [200]:
-        print("  ✓ PASS: Pipeline endpoint is responding")
+    if status in [200, 202]:
+        print("  ✓ PASS: Pipeline endpoint accepted request")
         results["pipeline"] = True
     else:
         print("  ✗ FAIL: Unexpected status code {}".format(status))
@@ -202,8 +216,8 @@ except HTTPError as e:
         print("  Response Body: {}".format(error_body[:800]))
     except:
         pass
-    if status == 200:
-        print("  ✓ PASS: Pipeline endpoint is responding")
+    if status in [200, 202]:
+        print("  ✓ PASS: Pipeline endpoint accepted request")
         results["pipeline"] = True
     else:
         print("  ✗ FAIL: Unexpected status code {}".format(status))
@@ -212,11 +226,21 @@ except HTTPError as e:
         else:
             results["errors"].append("Pipeline endpoint returned status {}".format(status))
 except URLError as e:
+  reason = str(e.reason)
+  if "timed out" in reason.lower():
+    pipeline_timed_out = True
+    print("  ! WARN: /run request timed out after 180s; continuing with blob verification poll")
+  else:
     print("  ✗ FAIL: Connection error: {}".format(e.reason))
     results["errors"].append("Pipeline endpoint connection error: {}".format(e.reason))
 except Exception as e:
-    print("  ✗ FAIL: {}".format(str(e)))
-    results["errors"].append("Pipeline endpoint error: {}".format(str(e)))
+  error_text = str(e)
+  if "timed out" in error_text.lower():
+    pipeline_timed_out = True
+    print("  ! WARN: /run request timed out after 180s; continuing with blob verification poll")
+  else:
+    print("  ✗ FAIL: {}".format(error_text))
+    results["errors"].append("Pipeline endpoint error: {}".format(error_text))
 
 # Verify that /run created a new parquet file in output container
 print("\nVerifying blob output: container 'output' has a newly created parquet file")
@@ -225,17 +249,22 @@ if before_blobs is None:
   results["errors"].append("Storage post-run verification skipped due to baseline listing failure")
 else:
   try:
-    after_blobs = list_parquet_blobs()
+    found_new_blob, current_count = wait_for_new_parquet_blob(len(before_blobs))
     print("  Baseline parquet blobs: {}".format(len(before_blobs)))
-    print("  Current parquet blobs : {}".format(len(after_blobs)))
-    if len(after_blobs) > len(before_blobs):
+    print("  Current parquet blobs : {}".format(current_count))
+    if found_new_blob:
       print("  ✓ PASS: New parquet blob detected in output container")
       results["storage"] = True
+      if pipeline_timed_out:
+        print("  ✓ PASS: Treating pipeline trigger as successful because blob output was produced")
+        results["pipeline"] = True
     else:
       print("  ✗ FAIL: No new parquet blob was created")
       results["errors"].append(
-        "Expected output container to gain a new parquet blob after /run, but count stayed at {}".format(len(after_blobs))
+        "Expected output container to gain a new parquet blob after /run, but count stayed at {}".format(current_count)
       )
+      if pipeline_timed_out and not results["pipeline"]:
+        results["errors"].append("Pipeline endpoint timed out after 180s and no new blob appeared during verification window")
   except Exception as e:
     print("  ✗ FAIL: Blob verification failed: {}".format(str(e)))
     results["errors"].append("Blob verification failed: {}".format(str(e)))

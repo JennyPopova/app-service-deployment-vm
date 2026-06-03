@@ -63,6 +63,19 @@ resource storage 'Microsoft.Storage/storageAccounts@2025-01-01' = {
   }
 }
 
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2025-01-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    deleteRetentionPolicy: {
+      enabled: false
+    }
+    containerDeleteRetentionPolicy: {
+      enabled: false
+    }
+  }
+}
+
 resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-10-01' = {
   name: storagePrivateEndpointName
   location: location

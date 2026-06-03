@@ -1,0 +1,147 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "18216759382886544460"
+    }
+  },
+  "parameters": {
+    "baseName": {
+      "type": "string",
+      "metadata": {
+        "description": "This is the base name for each Azure resource name (6-12 chars)"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "The resource group location"
+      }
+    },
+    "vnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the virtual network to deploy the runner into"
+      }
+    },
+    "agentsSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the subnet to deploy the runner into"
+      }
+    },
+    "runnerAdminUsername": {
+      "type": "string",
+      "metadata": {
+        "description": "The local admin username for the runner VM"
+      }
+    },
+    "runnerAdminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "The local admin password for the runner VM"
+      }
+    }
+  },
+  "variables": {
+    "runnerVmName": "[format('vm-runner-{0}', parameters('baseName'))]",
+    "runnerNicName": "[format('nic-{0}', variables('runnerVmName'))]",
+    "runnerVmSize": "Standard_E2s_v5",
+    "runnerImageSku": "22_04-lts",
+    "cloudInit": "#cloud-config\r\npackage_update: true\r\npackage_upgrade: false\r\nruncmd:\r\n  - apt-get update\r\n  - apt-get install -y curl ca-certificates gnupg lsb-release\r\n  - install -d -m 0755 /etc/apt/keyrings\r\n  - curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg\r\n  - chmod a+r /etc/apt/keyrings/microsoft.gpg\r\n  - bash -c \"echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ jammy main' > /etc/apt/sources.list.d/azure-cli.list\"\r\n  - apt-get update\r\n  - apt-get install -y azure-cli\r\n"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2024-10-01",
+      "name": "[variables('runnerNicName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('agentsSubnetName'))]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-11-01",
+      "name": "[variables('runnerVmName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[variables('runnerVmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('runnerVmName')]",
+          "adminUsername": "[parameters('runnerAdminUsername')]",
+          "adminPassword": "[parameters('runnerAdminPassword')]",
+          "customData": "[base64(variables('cloudInit'))]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": false,
+            "patchSettings": {
+              "patchMode": "ImageDefault",
+              "assessmentMode": "ImageDefault"
+            }
+          }
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "Canonical",
+            "offer": "0001-com-ubuntu-server-jammy",
+            "sku": "[variables('runnerImageSku')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('runnerNicName'))]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": true
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('runnerNicName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "runnerVmName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the runner VM."
+      },
+      "value": "[variables('runnerVmName')]"
+    },
+    "runnerPrivateIpAddress": {
+      "type": "string",
+      "metadata": {
+        "description": "The private IP address of the runner VM."
+      },
+      "value": "[reference(resourceId('Microsoft.Network/networkInterfaces', variables('runnerNicName')), '2024-10-01').ipConfigurations[0].properties.privateIPAddress]"
+    }
+  }
+}

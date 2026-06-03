@@ -125,7 +125,6 @@ resource webApp 'Microsoft.Web/sites@2024-11-01' = {
     hostNamesDisabled: false
     publicNetworkAccess: 'Disabled'
     siteConfig: {
-      vnetRouteAllEnabled: true
       http20Enabled: true
       alwaysOn: true
       linuxFxVersion: 'PYTHON|3.12'
@@ -143,6 +142,7 @@ resource appsettings 'Microsoft.Web/sites/config@2024-11-01' = {
   parent: webApp
   properties: {
     SCM_DO_BUILD_DURING_DEPLOYMENT: '1'
+    WEBSITE_VNET_ROUTE_ALL: '1'
     AZURE_CLIENT_ID: appServiceManagedIdentity.properties.clientId
     AZURE_STORAGE_ACCOUNT: storageName
     SQL_SERVER: '@Microsoft.KeyVault(SecretUri=${keyVaultUri}/secrets/sql-server/)'

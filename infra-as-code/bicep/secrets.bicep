@@ -51,6 +51,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2025-05-01' = {
     enabledForDiskEncryption: false
     enabledForTemplateDeployment: false
     enableRbacAuthorization: true
+    // Azure Key Vault requires soft delete to remain enabled.
     enableSoftDelete: true
     publicNetworkAccess: 'Disabled'
     tenantId: tenant().tenantId

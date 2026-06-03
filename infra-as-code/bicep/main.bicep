@@ -10,7 +10,7 @@ param baseName string
 param developmentEnvironment bool = false
 
 @description('Destination prefix for external database outbound traffic from the app subnet (for example: Internet, a Service Tag, or a specific CIDR).')
-param externalDatabaseDestinationPrefix string = 'Internet'
+param externalDatabaseDestinationPrefix string = 'Sql'
 
 @description('Destination port for external database outbound traffic from the app subnet.')
 @minValue(1)
